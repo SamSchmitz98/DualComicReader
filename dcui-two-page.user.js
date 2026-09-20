@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         DCUI Two-Page View
 // @namespace    https://github.com/SamSchmitz98/DualComicReader
-// @version      0.8.0
+// @version      0.9.0
 // @description  Shows two portrait pages side by side in the DC Universe Infinite web reader, like an open print comic. Layout only - no downloading, extracting or re-hosting of artwork.
 // @author       SamSchmitz98
 // @match        https://www.dcuniverseinfinite.com/comics/book/*
@@ -55,7 +55,7 @@
     pageCount: '.page-count',
   };
 
-  const VERSION = (typeof GM_info !== 'undefined' && GM_info.script && GM_info.script.version) || '0.8.0';
+  const VERSION = (typeof GM_info !== 'undefined' && GM_info.script && GM_info.script.version) || '0.9.0';
 
   const DEFAULT_ASPECT = 0.652;   // standard US comic page, used until the manifest loads
   const MIN_BOX = 260;            // below this a pair is unreadable; fall back to single page
@@ -65,6 +65,7 @@
   const FADE_MS = 80;             // fade out/in across a page turn; drives CSS and the wait
   const FADE_MAX_MS = 900;        // never hold the screen faded out longer than this
   const SETTLE_QUIET = 620;       // ms of no page change that counts as "arrived"
+  const ARRIVAL_QUIET = 320;      // after the counter hits the target: time for the neighbour canvas to redraw
 
   // ---------------------------------------------------------------- state
 
@@ -81,7 +82,6 @@
     rows: [],           // [[1], [2,3], [4], [5,6], ...] - the whole issue in rows
     rowOf: [],          // rowOf[pageNumber] = index into rows
     rowsKey: '',        // signature of the inputs the rows were built from
-    aligned: false,     // have we nudged onto a row boundary since load?
     stock: null,        // snapshot of the untouched reader, to verify T restores it
     tornDown: false,    // teardown is idempotent; this is the latch
     smooth: true,       // fade across page turns instead of watching them
@@ -314,11 +314,6 @@
     return { pair: false, why: 'alone (its neighbour is a spread)' };
   }
 
-  const pairsWithNext = (page) => {
-    const d = pairDecision(page);
-    return d.pair && d.left === 'cur';
-  };
-
   // Where an arrow press should land: the first page of the next or previous
   // row. Stepping back from the right half of a pair aligns to its left page
   // first, which is what you want if you arrived mid-row.
@@ -333,8 +328,9 @@
       const next = state.rows[idx + 1];
       return next ? next[0] : page;
     }
-    const row = state.rows[idx];
-    if (page !== row[0]) return row[0];
+    // Backwards always means the previous spread. A page that trails its row
+    // is already displayed as that row (see pairDecision), so "go to the
+    // start of this row" would look like nothing happened.
     const prev = state.rows[idx - 1];
     return prev ? prev[0] : 1;
   }
@@ -417,7 +413,7 @@
       'manifest   ' + state.manifestDecoded + '/' + (state.manifestExpected || '?') + ' decoded, ' +
         spreadPages().length + ' spreads' +
         (state.manifestDecoded < state.manifestExpected ? '  (still loading)' : ''),
-      'nav hook   ' + (state.passThrough ? 'NONE - keys passed to reader' : (state.navStrategy || 'not yet determined')) +
+      'nav hook   ' + (state.passThrough ? 'NONE - keys passed to reader, one page per press' : 'jump:thumbnail') +
         '   jump ' + (state.jumpWorks === null ? 'untested' : state.jumpWorks ? 'YES' : 'no') +
         (state.jumpOffset ? '(' + (state.jumpOffset > 0 ? '+' : '') + state.jumpOffset + ')' : '') +
         '   fade ' + (state.smooth ? 'on' : 'off'),
@@ -682,15 +678,11 @@
 
     if (!state.manifest.length) readManifest();
 
-    // A pair takes two page turns, and between them the counter sits on the
-    // intermediate page - which would lay out as a single page and then back,
-    // jumping the container sideways for half a second on every turn. Hold the
-    // current layout until navigation settles; step() re-applies at the end.
-    if (state.navigating) { updateHud(); return; }
-
-    // Counted here rather than on entry: the early returns above are cheap and
-    // frequent during a page turn, and counting them made the churn detector
-    // cry wolf.
+    // No freeze during navigation. Slots are reassigned on every change so the
+    // display always shows the row the reader is on - including the page it
+    // passes through mid-jump, which trails the same row and so looks
+    // identical. Counted here, past the cheap early returns, so the churn
+    // detector measures real layouts.
     state.stats.applies++;
 
     const page = currentPage();
@@ -939,6 +931,18 @@
   // Wait for a specific page. Needed for jumps: the reader animates through
   // the pages in between, so watching for "the counter changed" reports a page
   // it merely passed through and makes a working jump look like a failure.
+  function waitForCounter(target, timeout) {
+    return new Promise((resolve) => {
+      const started = Date.now();
+      const tick = () => {
+        if (currentPage() === target) return resolve(true);
+        if (Date.now() - started > timeout) return resolve(false);
+        setTimeout(tick, 30);
+      };
+      tick();
+    });
+  }
+
   // Wait until the page counter stops moving, and report where it came to
   // rest. Watching for a particular page is not enough: the reader animates
   // through the pages in between, so we would call a move finished while it
@@ -1074,11 +1078,20 @@
       const before = currentPage();
       el.dispatchEvent(makeEvent(MouseEvent, 'click',
         { bubbles: true, cancelable: true, composed: true, button: 0 }));
-      const settled = await settledPage(JUMP_TIMEOUT, SETTLE_QUIET + 200);
-      const landed = settled === target ? { page: target } : null;
+      // The reader animates page by page, so first wait for the counter to
+      // reach the target, then fade while its neighbour canvas is redrawn -
+      // that redraw is the only moment the display can show a stale page.
+      // If the counter overshoots (a miscalibrated offset), the settle after
+      // arrival catches it and we fall through to recalibrate.
+      let landed = null;
+      if (await waitForCounter(target, JUMP_TIMEOUT)) {
+        if (state.smooth) setTurning(true);
+        const rest = await settledPage(FADE_MAX_MS, ARRIVAL_QUIET);
+        if (rest === target) landed = { page: target };
+      }
 
       if (!landed) {
-        const now = settled;
+        const now = await settledPage(JUMP_TIMEOUT, SETTLE_QUIET);
         if (now !== before) {
           // It navigated, just not where we asked. Calibrate against the
           // thumbnail we actually clicked and let the caller correct this one.
@@ -1133,24 +1146,31 @@
 
     state.navReason = (why || 'goto') + ' to ' + target;
     log((why || 'goto') + ': page ' + page + ' -> ' + target);
-    if (state.smooth) { setTurning(true); await sleep(FADE_MS); }
 
-    // Only worth jumping when it saves a transition; a single step is already
-    // one transition and the arrow path is the better-tested one.
-    if (Math.abs(target - page) > 1 && state.jumpWorks !== false) {
-      const landed = await jumpToPage(target);
-      if (landed === target) return target;
-      page = currentPage();
-      if (page === target) return page;
+    // The thumbnail jump is the ONLY synthetic input this reader honours
+    // (probeNav: every keyboard, mouse and touch strategy does nothing - the
+    // canvas widget ignores them; the thumbnail's click handler is Vue's and
+    // does not care). So there is no stepping fallback: if the jump fails
+    // there is nothing else to try, and the arrow keys go back to the reader.
+    if (state.jumpWorks !== true) {
+      state.passThrough = true;
+      warn('cannot navigate: the thumbnail jump is not known to work. Run dcui2p.probeNav().');
+      return page;
     }
 
-    let guard = 0;
-    while (page !== target && guard++ < 8) {
-      const landed = await navOnce(page < target ? 1 : -1);
-      if (!landed) break;
-      page = landed;
+    const before = page;
+    const landed = await jumpToPage(target);
+    if (landed === target) return target;
+
+    page = currentPage();
+    if (page === target) return page;
+    if (page === before) {
+      // Nothing moved at all. Do not keep swallowing arrow keys.
+      state.passThrough = true;
+      warn('jump did nothing - handing the arrow keys back to the reader for this session');
+    } else {
+      warn('stopped at page ' + page + ', wanted ' + target + ' (the display still shows the right row)');
     }
-    if (page !== target) warn('stopped at page ' + page + ', wanted ' + target);
     return page;
   }
 
@@ -1166,67 +1186,12 @@
         return;
       }
       await goToPage(target, 'step ' + (dir > 0 ? 'forward' : 'back'));
-
-      // Our own navigation must come to rest on a page that leads a row. If it
-      // does not - a jump that stopped short, a step the reader dropped - the
-      // layout shows a lone page, or repeats the page you just read on the
-      // left. Correct it once.
-      //
-      // Only after OUR moves: the reader's own click-to-advance and swipe are
-      // the user's business, and yanking them back to a boundary would break
-      // controls the brief says to leave working.
-      const settled = currentPage();
-      const row = rowFor(settled);
-      if (row && row[0] !== settled) {
-        warn('settled on page ' + settled + ', mid-row [' + row.join(', ') + '] - correcting to ' + row[0]);
-        await goToPage(row[0], 'correct');
-      }
+      // No correction pass: a jump lands exactly once calibrated, and even if
+      // it did not, a page that trails its row is displayed as that row.
     } finally {
       state.navigating = false;
       apply();
       // Next frame, so the reveal happens after the new layout is painted.
-      requestAnimationFrame(() => setTurning(false));
-    }
-  }
-
-  // Opening an issue part-way through can drop you on the right half of a
-  // pair, which looks wrong on arrival. Nudge onto the row boundary once.
-  let alignWaitStart = 0;
-
-  async function maybeAlign() {
-    if (state.aligned || !state.enabled || state.navigating) return;
-
-    // Nothing to align: with no way to navigate we cannot move the reader,
-    // and we no longer need to - a page that trails its row is displayed
-    // beside the previous canvas rather than navigated away from.
-    if (state.passThrough) { state.aligned = true; return; }
-
-    // Do not align on a provisional row model. Until the thumbnails have
-    // decoded, every page looks portrait, so a spread earlier in the issue is
-    // missing and the row leaders after it are wrong - and alignment only ever
-    // runs once, so getting it wrong here is permanent.
-    if (state.manifestExpected && state.manifestDecoded < state.manifestExpected) {
-      if (!alignWaitStart) alignWaitStart = Date.now();
-      if (Date.now() - alignWaitStart < 20000) {
-        setTimeout(maybeAlign, 750);
-        return;
-      }
-      log('align: manifest still incomplete after 20s, aligning anyway');
-    }
-
-    const page = currentPage();
-    const row = rowFor(page);
-    if (!page || !row) return;
-
-    state.aligned = true;          // one attempt per issue, success or not
-    if (row[0] === page) return;
-
-    state.navigating = true;
-    try {
-      await goToPage(row[0], 'align');
-    } finally {
-      state.navigating = false;
-      apply();
       requestAnimationFrame(() => setTurning(false));
     }
   }
@@ -1354,25 +1319,28 @@
       state.parity = state.parity ? 0 : 1;
       store.set('parity', state.parity);
       buildRows();
-      // The rows moved under us, so the current page may now be a right half.
-      // Let the aligner put us back on a boundary.
-      state.aligned = false;
       log('parity: offset ' + state.parity + ' (' + (state.parity ? 'pairs from page 1' : 'cover alone, then pairs') + ')');
       apply();
-      setTimeout(maybeAlign, 50);
       return;
     }
 
     if (e.key === 'ArrowRight' || e.key === 'ArrowLeft') {
-      // If we have no working way to navigate, do not swallow the key - the
-      // reader would have no way to turn the page either.
-      if (state.passThrough) return;
+      // Only take the key if we can actually move the reader ourselves;
+      // otherwise the reader's one-page turn is the only navigation there is.
+      if (state.passThrough || state.jumpWorks !== true) return;
 
-      // Stop the reader acting on this keypress; we re-issue our own so a
-      // single press moves a whole pair.
+      const dir = e.key === 'ArrowRight' ? 1 : -1;
+      const page = currentPage();
+      const target = page ? targetPage(page, dir) : 0;
+
+      // The thumbnail for page N lands on N+1, which makes page 1 unreachable
+      // by jumping. A single reader turn gets there, so let that press through.
+      if (!target || target === page || (target === 1 && page - target === 1)) return;
+
+      // Stop the reader acting on this keypress; one press moves a whole row.
       e.preventDefault();
       e.stopImmediatePropagation();
-      step(e.key === 'ArrowRight' ? 1 : -1);
+      step(dir);
     }
   }
 
@@ -1412,6 +1380,9 @@
     state.smooth = store.get('smooth', true);
     state.jumpWorks = store.get('jumpWorks', null);
     state.jumpOffset = store.get('jumpOffset', 0);
+    // Only intercept arrows once the jump is known to work; until then the
+    // reader keeps its keys and pages turn one at a time.
+    state.passThrough = state.jumpWorks !== true;
 
     // Bind the key handler FIRST, before anything else and before the reader
     // has loaded. Listeners on the same target fire in registration order, so
@@ -1464,7 +1435,6 @@
           ensureRows();
           log('ready: page ' + currentPage() + ' of ' + state.total + ', ' + state.rows.length + ' rows');
           apply();
-          setTimeout(maybeAlign, 400);
         }
       }
     }, 500);
@@ -1480,14 +1450,11 @@
       state.rows = [];
       state.rowOf = [];
       state.rowsKey = '';
-      state.aligned = false;
-      alignWaitStart = 0;
       log('navigated to ' + location.pathname);
       if (onReaderPage()) {
         setTimeout(() => {
           if (!readManifest()) pollManifest();
           apply();
-          setTimeout(maybeAlign, 400);
         }, 1200);
       } else {
         teardown();

@@ -25,7 +25,7 @@ works and why this approach was chosen.
 | `P` | Shift the pairing offset, for books whose numbering does not line up. Default keeps the cover alone; pressing `P` pairs from page 1 instead. |
 | `S` | Toggle the fade across page turns. On by default. |
 | `D` | Toggle the debug HUD. |
-| `←` `→` | The reader's own page turn, one page per press. Two presses move a spread. |
+| `←` `→` | Move one *spread* at a time (via the page-browser thumbnails — the only synthetic input the reader honors). |
 
 All settings are remembered per site, via the userscript manager's
 storage where available and `localStorage` otherwise.
@@ -69,17 +69,23 @@ after that is a lookup. In the test issue, whose page 3 is a spread, the
 layout comes out as `[1] [2] [3] [4,5] [6,7] …` — page 2 correctly goes solo
 because its partner is a spread.
 
-Arrow keys are left to the reader, which turns one page per press, so two
-presses advance a spread. The display stays on the correct pair either way,
-because the carousel already holds the page that belongs beside the current
-one: when the current page leads its row the spread is `current + next`, and
-when it trails its row the spread is `previous + current`. Nothing has to be
-navigated to show the right two pages.
+Arrow keys move one spread at a time. The reader's canvas widget ignores
+every synthetic keyboard, mouse and touch event, so the script cannot press
+its buttons for it — but the page browser's thumbnails are rendered by the
+site's Vue layer, and a synthetic click on one of those *does* navigate. The
+script clicks the thumbnail for the first page of the next (or previous) row.
+See [FINDINGS.md](FINDINGS.md) for how this was established.
 
-This is not a stylistic choice. The reader ignores every synthetic keyboard,
-mouse and touch event, so a script cannot turn its pages — see
-[FINDINGS.md](FINDINGS.md). `dcui2p.probeNav()` re-tests this and will resume
-paired navigation automatically if a hook ever works.
+The display stays on the correct pair regardless of how the reader got where
+it is, because the carousel already holds the page that belongs beside the
+current one: when the current page leads its row the spread is
+`current + next`, and when it trails its row the spread is
+`previous + current`. That also makes a two-page jump look like a single
+change — the page it passes through trails the same row, so the screen does
+not alter until the destination lands.
+
+If you use the reader's own controls — click-to-advance, swipe, the page
+browser — you move one page at a time and the pairing follows you.
 
 ### Smoothness
 
@@ -147,12 +153,18 @@ If arrow keys are not turning pages, `dcui2p.probeNav()` is the place to start
   deterministically with `!important` rather than trusting the widget to have
   recomputed its slide offsets for the narrowed container. Page turns are
   instant instead of sliding.
-- **One arrow press turns one page, not one spread.** The reader ignores
-  synthetic events, so the script cannot turn pages itself; it leaves the
-  arrow keys alone and pairs the display around wherever the reader lands.
-  Advancing a spread therefore takes two presses, and the first of them looks
-  like nothing happened — the same pair stays on screen, because the reader
-  has only moved from the left half of it to the right half.
+- **Navigation depends on one hook: a synthetic click on a page-browser
+  thumbnail.** If DCUI ever changes that handler, the script cannot turn
+  pages itself; it says so in the console and hands the arrow keys back to
+  the reader, which then turns one page per press. The pairing keeps working
+  either way. `dcui2p.probeNav()` re-tests every hook.
+- **Page 1 is reached by the reader's own turn, not by jumping.** The
+  thumbnail for page N lands on N+1, so the cover cannot be jumped to; the
+  script lets that single press through instead.
+- **A spread advance still costs two reader page turns** (~950ms), since the
+  reader animates through the page in between. The display does not change
+  until the destination lands, and a brief fade covers the moment the
+  neighbouring canvas is redrawn.
 - **`@match` covers `/comics/book/*`, not only `/c/reader`.** The reader is a
   single-page app, so a script matched strictly on the reader URL would never
   load when you navigate into the reader from a book page. The script stays
