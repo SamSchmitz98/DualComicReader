@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         DCUI Two-Page View
 // @namespace    https://github.com/SamSchmitz98/DualComicReader
-// @version      0.3.0
+// @version      0.3.1
 // @description  Shows two portrait pages side by side in the DC Universe Infinite web reader, like an open print comic. Layout only - no downloading, extracting or re-hosting of artwork.
 // @author       SamSchmitz98
 // @match        https://www.dcuniverseinfinite.com/comics/book/*
@@ -75,7 +75,23 @@
     rowOf: [],          // rowOf[pageNumber] = index into rows
     rowsKey: '',        // signature of the inputs the rows were built from
     aligned: false,     // have we nudged onto a row boundary since load?
+    stock: null,        // snapshot of the untouched reader, to verify T restores it
+    stats: { applies: 0, mutations: 0, resizes: 0, canvases: 0, rate: '0/s 0/s', since: Date.now() },
   };
+
+  // Our own resize dispatch makes the reader redraw, which mutates the DOM,
+  // which schedules another apply. That is meant to settle immediately - but
+  // if it ever does not, it would show up as a TV-melting feedback loop rather
+  // than an error. Sample the rates so the HUD can show it plainly.
+  setInterval(() => {
+    const s = state.stats;
+    const secs = Math.max(1, (Date.now() - s.since) / 1000);
+    s.rate = Math.round(s.applies / secs) + '/s apply, ' + Math.round(s.mutations / secs) + '/s mut';
+    if (s.applies / secs > 20) {
+      warn('layout churn: ' + s.rate + ' - something is feeding back');
+    }
+    s.applies = 0; s.mutations = 0; s.since = Date.now();
+  }, 2000);
 
   // GM_* is not available in every engine/grant combination, so fall back to
   // localStorage. Per-site by construction: localStorage is already origin-scoped.
@@ -339,6 +355,8 @@
       'manifest   ' + (state.manifest.filter(Boolean).length || 0) + ' pages, ' +
         spreadPages().length + ' spreads',
       'nav hook   ' + (state.navStrategy || 'not yet determined'),
+      'churn      ' + state.stats.rate + '   resizes sent ' + state.stats.resizes +
+        '   canvases ' + state.stats.canvases,
       '',
       'canvases:',
       ...canvasLines,
@@ -459,6 +477,15 @@
     if (applying) return;
     const host = q(SEL.host);
     if (!host) return;
+    state.stats.applies++;
+
+    // We assume a fixed pool of three canvases. If the reader ever adds or
+    // drops one, the classification changes meaning and we want to know.
+    const count = qa('canvas', host).length;
+    if (count !== state.stats.canvases) {
+      log('canvas pool: ' + state.stats.canvases + ' -> ' + count);
+      state.stats.canvases = count;
+    }
 
     if (!state.enabled) return teardown();
     if (!state.manifest.length) readManifest();
@@ -519,10 +546,40 @@
     if (boxW !== state.boxW) {
       log('resize: box ' + state.boxW + 'px -> ' + boxW + 'px, asking the reader to redraw');
       state.boxW = boxW;
+      state.stats.resizes++;
       window.dispatchEvent(new Event('resize'));
     }
 
     updateHud();
+  }
+
+  // The brief requires that toggling off leaves the reader's stock behaviour
+  // intact. Nothing else checks that, so snapshot the untouched reader before
+  // we first modify it and diff against it after a teardown.
+  function snapshot() {
+    const host = q(SEL.host);
+    if (!host) return null;
+    const cs = getComputedStyle(host);
+    return {
+      width: cs.width, left: cs.left, overflow: cs.overflow, background: cs.backgroundColor,
+      canvasCount: qa('canvas', host).length,
+      canvasSizes: qa('canvas', host).map((c) => c.width + 'x' + c.height).sort().join(','),
+      canvasClasses: qa('canvas', host).map((c) => c.className).join('|'),
+      rootClass: document.documentElement.className,
+      backdrop: !!q('#dcui2p-backdrop'),
+    };
+  }
+
+  function verifyRestore() {
+    if (!state.stock) return log('restore check: no baseline was captured');
+    const now = snapshot();
+    if (!now) return log('restore check: reader is gone');
+    const diffs = Object.keys(state.stock)
+      .filter((k) => String(state.stock[k]) !== String(now[k]))
+      .map((k) => k + ': ' + state.stock[k] + ' -> ' + now[k]);
+    if (!diffs.length) log('restore check: OK, reader matches its pre-script state');
+    else warn('restore check: ' + diffs.length + ' difference(s) - ' + diffs.join('; '));
+    return diffs;
   }
 
   function teardown() {
@@ -544,6 +601,8 @@
     // Let the reader measure its restored full-width container and redraw.
     window.dispatchEvent(new Event('resize'));
     updateHud();
+    // Give the reader a moment to finish redrawing before judging it.
+    setTimeout(verifyRestore, 700);
   }
 
   // ------------------------------------------------------------- navigation
@@ -844,7 +903,10 @@
     // The reader rewrites inline transforms on every turn, recycles canvases,
     // and rewrites the page counter. One observer over the whole reader
     // catches all of it; `applying` keeps our own writes from re-triggering.
-    const observer = new MutationObserver(() => { if (!applying) schedule(); });
+    const observer = new MutationObserver((records) => {
+      state.stats.mutations += records.length;
+      if (!applying) schedule();
+    });
     observer.observe(outer.parentElement || outer, {
       subtree: true, childList: true, characterData: true,
       attributes: true, attributeFilter: ['style', 'class'],
@@ -878,6 +940,9 @@
         readManifest();
         if (watch()) {
           clearInterval(boot);
+          // Capture the untouched reader before apply() first modifies it.
+          state.stock = snapshot();
+          state.stats.canvases = state.stock ? state.stock.canvasCount : 0;
           ensureRows();
           log('ready: page ' + currentPage() + ' of ' + state.total + ', ' + state.rows.length + ' rows');
           apply();
@@ -924,6 +989,9 @@
         spreads: spreadPages,
         rows: () => { ensureRows(); return state.rows; },
         rowFor: rowFor,
+        verifyRestore: verifyRestore,
+        snapshot: snapshot,
+        stats: () => state.stats,
         canvases: () => {
           const host = q(SEL.host);
           if (!host) return [];
