@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         DCUI Two-Page View
 // @namespace    https://github.com/SamSchmitz98/DualComicReader
-// @version      0.5.0
+// @version      0.5.1
 // @description  Shows two portrait pages side by side in the DC Universe Infinite web reader, like an open print comic. Layout only - no downloading, extracting or re-hosting of artwork.
 // @author       SamSchmitz98
 // @match        https://www.dcuniverseinfinite.com/comics/book/*
@@ -54,12 +54,14 @@
     pageCount: '.page-count',
   };
 
-  const VERSION = (typeof GM_info !== 'undefined' && GM_info.script && GM_info.script.version) || '0.5.0';
+  const VERSION = (typeof GM_info !== 'undefined' && GM_info.script && GM_info.script.version) || '0.5.1';
 
   const DEFAULT_ASPECT = 0.652;   // standard US comic page, used until the manifest loads
   const MIN_BOX = 260;            // below this a pair is unreadable; fall back to single page
   const NAV_TIMEOUT = 1600;       // ms to wait for the reader to actually turn a page
   const PROBE_TIMEOUT = 1200;     // ms per strategy when probing for a working nav hook
+  const JUMP_TIMEOUT = 2600;      // ms to reach the target page after a thumbnail click
+  const FADE_MS = 80;             // fade out/in across a page turn; drives CSS and the wait
 
   // ---------------------------------------------------------------- state
 
@@ -426,7 +428,7 @@
     // A page turn is a content swap we cannot animate, so fade over it: the
     // pages appear to change together rather than one visibly following the
     // other. The backdrop behind is already black, so this reads as a blink.
-    'html.dcui2p-on.dcui2p-smooth ' + SEL.host + ' { transition: opacity 130ms ease; }',
+    'html.dcui2p-on.dcui2p-smooth ' + SEL.host + ' { transition: opacity ' + FADE_MS + 'ms ease; }',
     'html.dcui2p-on.dcui2p-smooth.dcui2p-turning ' + SEL.host + ' { opacity: 0 !important; }',
     // Debug view: show the hidden canvases faintly and outline every slot, so
     // it is obvious which canvas the script thinks is which.
@@ -522,7 +524,6 @@
     if (applying) return;
     const host = q(SEL.host);
     if (!host) return;
-    state.stats.applies++;
 
     // We assume a fixed pool of three canvases. If the reader ever adds or
     // drops one, the classification changes meaning and we want to know.
@@ -552,6 +553,11 @@
     // jumping the container sideways for half a second on every turn. Hold the
     // current layout until navigation settles; step() re-applies at the end.
     if (state.navigating) { updateHud(); return; }
+
+    // Counted here rather than on entry: the early returns above are cheap and
+    // frequent during a page turn, and counting them made the churn detector
+    // cry wolf.
+    state.stats.applies++;
 
     const page = currentPage();
     if (!page) return;
@@ -784,6 +790,21 @@
     { name: 'touch:swipe', run: (dir) => dispatchSwipe(dir) },
   ];
 
+  // Wait for a specific page. Needed for jumps: the reader animates through
+  // the pages in between, so watching for "the counter changed" reports a page
+  // it merely passed through and makes a working jump look like a failure.
+  function waitForPage(target, timeout) {
+    return new Promise((resolve) => {
+      const started = Date.now();
+      const tick = () => {
+        if (currentPage() === target) return resolve({ page: target, ms: Date.now() - started });
+        if (Date.now() - started > timeout) return resolve(null);
+        setTimeout(tick, 50);
+      };
+      setTimeout(tick, 50);
+    });
+  }
+
   function waitForPageChange(from, timeout = NAV_TIMEOUT) {
     return new Promise((resolve) => {
       const started = Date.now();
@@ -860,26 +881,31 @@
       const before = currentPage();
       el.dispatchEvent(makeEvent(MouseEvent, 'click',
         { bubbles: true, cancelable: true, composed: true, button: 0 }));
-      const landed = await waitForPageChange(before, PROBE_TIMEOUT);
-      if (!landed) continue;
+      const landed = await waitForPage(target, JUMP_TIMEOUT);
 
-      if (landed.page === target) {
-        if (state.jumpWorks !== true) {
-          state.jumpWorks = true;
-          store.set('jumpWorks', true);
-          log('jump: clicking the page-' + target + ' thumbnail works - one transition per move');
+      if (!landed) {
+        const now = currentPage();
+        if (now !== before) {
+          warn('jump: click moved to ' + now + ' and stopped, wanted ' + target);
+          return now;
         }
-        // A click might also have opened the browser modal; close it if so.
-        const modal = q('.reader-modal__page-browser');
-        if (modal && modal.getBoundingClientRect().width > 0) {
-          document.body.dispatchEvent(makeEvent(KeyboardEvent, 'keydown',
-            { key: 'Escape', code: 'Escape', keyCode: 27, which: 27, bubbles: true, cancelable: true }));
-          log('jump: closed the page browser it opened');
-        }
-        return target;
+        continue;     // nothing happened - try the next candidate element
       }
-      warn('jump: landed on ' + landed.page + ', wanted ' + target);
-      return landed.page;
+
+      if (state.jumpWorks !== true) {
+        state.jumpWorks = true;
+        store.set('jumpWorks', true);
+        log('jump: clicking a page thumbnail works - one move per turn');
+      }
+      // A click might also have opened the browser modal; close it if so.
+      const modal = q('.reader-modal__page-browser');
+      if (modal && modal.getBoundingClientRect().width > 0) {
+        document.body.dispatchEvent(makeEvent(KeyboardEvent, 'keydown',
+          { key: 'Escape', code: 'Escape', keyCode: 27, which: 27, bubbles: true, cancelable: true }));
+        log('jump: closed the page browser it opened');
+      }
+      log('jump: reached page ' + target + ' in ' + landed.ms + 'ms');
+      return target;
     }
 
     state.jumpWorks = false;
@@ -897,7 +923,7 @@
     if (!page || page === target) return page;
 
     log((why || 'goto') + ': page ' + page + ' -> ' + target);
-    if (state.smooth) { setTurning(true); await sleep(140); }
+    if (state.smooth) { setTurning(true); await sleep(FADE_MS); }
 
     // Only worth jumping when it saves a transition; a single step is already
     // one transition and the arrow path is the better-tested one.
