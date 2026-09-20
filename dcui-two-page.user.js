@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         DCUI Two-Page View
 // @namespace    https://github.com/SamSchmitz98/DualComicReader
-// @version      1.4.0
+// @version      1.5.0
 // @description  Shows two portrait pages side by side in the DC Universe Infinite web reader, like an open print comic. Layout only - no downloading, extracting or re-hosting of artwork.
 // @author       SamSchmitz98
 // @match        https://www.dcuniverseinfinite.com/comics/book/*
@@ -64,7 +64,7 @@
     pageCount: '.page-count',
   };
 
-  const VERSION = (typeof GM_info !== 'undefined' && GM_info.script && GM_info.script.version) || '1.4.0';
+  const VERSION = (typeof GM_info !== 'undefined' && GM_info.script && GM_info.script.version) || '1.5.0';
 
   const DEFAULT_ASPECT = 0.652;   // standard US comic page, used until the manifest loads
   const MIN_BOX = 260;            // below this a pair is unreadable; fall back to single page
@@ -82,6 +82,7 @@
   const PAD_DIM = 2;               // X
   const PAD_SINGLE = 3;            // Y
   const PAD_HELP = 9;              // Menu / Start
+  const PAD_FULL = 8;              // View / Back
   const DIM_LEVELS = [1, 0.85, 0.7, 0.55];
   const HELP_SECONDS = 14;         // the card puts itself away again
   const PAD_AXIS = 0.6;            // stick deflection that counts as a press
@@ -1579,6 +1580,36 @@
     apply();
   }
 
+  // Fullscreen, which matters when the whole desktop is being streamed rather
+  // than a single cast tab: it takes the browser's own chrome off the TV, and
+  // the extra height goes straight into the page size.
+  //
+  // Browsers only allow this from a genuine user gesture, and Chrome does not
+  // count gamepad input as one - so the pad button works only if the stream
+  // is also delivering a keystroke or click at that moment. It is bound
+  // anyway, because it costs nothing and fails loudly rather than silently.
+  function toggleFullscreen(fromPad) {
+    try {
+      if (document.fullscreenElement) {
+        const out = document.exitFullscreen();
+        if (out && out.catch) out.catch(() => {});
+        log('fullscreen: off');
+        return;
+      }
+      const req = document.documentElement.requestFullscreen &&
+                  document.documentElement.requestFullscreen();
+      if (req && req.catch) {
+        req.catch(() => {
+          warn('fullscreen refused by the browser' + (fromPad ? ' - a gamepad press is not a ' +
+               'user gesture, so this needs the F key' : '') + '.');
+        });
+      }
+      log('fullscreen: on');
+    } catch (e) {
+      warn('fullscreen: ' + e.message);
+    }
+  }
+
   function helpText() {
     const pct = Math.round(DIM_LEVELS[state.dim] * 100) + '%';
     return [
@@ -1587,6 +1618,7 @@
       '  \u2190  \u2192      previous / next spread',
       '  drag       swipe left or right',
       '',
+      '  F          full screen             ' + (document.fullscreenElement ? '[on]' : '[off]'),
       '  Z          one page at a time      ' + (state.single ? '[on]' : '[off]'),
       '  B          dim the screen          [' + pct + ']',
       '  P          pairing offset          ' + (state.parity ? '[from page 1]' : '[cover alone]'),
@@ -1598,6 +1630,7 @@
       '  controller',
       '    triggers, bumpers, d-pad, stick   spreads',
       '    X  dim      Y  one page      Menu  this card',
+      '    View  full screen (needs the F key on some setups)',
     ].join('\n');
   }
 
@@ -1698,7 +1731,8 @@
         if (down && !padHeld.has(id)) {
           padHeld.add(id);
           state.padLast = 'button ' + i;
-          if (i === PAD_DIM) cycleDim();
+          if (i === PAD_FULL) toggleFullscreen(true);
+          else if (i === PAD_DIM) cycleDim();
           else if (i === PAD_SINGLE) toggleSingle();
           else if (i === PAD_HELP) toggleHelp();
           else padNavigate(PAD_NEXT.indexOf(i) >= 0 ? 1 : PAD_PREV.indexOf(i) >= 0 ? -1 : 0);
@@ -1809,7 +1843,7 @@
 
     // Our hotkeys are ours: keep them from reaching the reader, which may bind
     // the same letters to its own controls.
-    if ('dtpsbzh'.indexOf(key) >= 0 && key.length === 1) {
+    if ('dtpsbzhf'.indexOf(key) >= 0 && key.length === 1) {
       e.preventDefault();
       e.stopImmediatePropagation();
     }
@@ -1838,6 +1872,7 @@
       return;
     }
 
+    if (key === 'f') { toggleFullscreen(false); return; }
     if (key === 'b') { cycleDim(); return; }
     if (key === 'z') { toggleSingle(); return; }
     if (key === 'h') { toggleHelp(); return; }
@@ -1954,6 +1989,7 @@
       document.addEventListener(type, onKeyUpOrPress, true);
     }
     window.addEventListener('resize', schedule);
+    document.addEventListener('fullscreenchange', schedule);
     window.addEventListener('pointerup', onCornerTap, true);
     window.addEventListener('pointerdown', onPointerDown, true);
     window.addEventListener('pointermove', onPointerMove, true);
@@ -2052,6 +2088,7 @@
         suspend: () => suspend('manual'),
         resume: resume,
         help: toggleHelp,
+        fullscreen: () => toggleFullscreen(false),
         single: toggleSingle,
         dim: cycleDim,
         zoomed: readerZoomed,

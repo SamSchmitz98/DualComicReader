@@ -58,6 +58,7 @@ New versions are picked up automatically from this repository.
 |---|---|
 | `T` | Toggle the script on and off. Off restores the reader's stock behavior exactly. |
 | `P` | Shift the pairing offset, for books whose numbering does not line up. Default keeps the cover alone; pressing `P` pairs from page 1 instead. |
+| `F` | Full screen. Worth it when streaming the whole desktop — it takes the browser's own chrome off the TV and the extra height goes into the page size. |
 | `Z` | Show one page at a time instead of a spread. |
 | `B` | Dim the screen — cycles 100 / 85 / 70 / 55%. |
 | `H` | Show a card listing every key and the controller mapping. |
@@ -65,7 +66,7 @@ New versions are picked up automatically from this repository.
 | `D` | Toggle the debug HUD. On a touch device, triple-tap the top-left corner instead. |
 | `←` `→` | Move one *spread* at a time (via the page-browser thumbnails — the only synthetic input the reader honors). |
 | Swipe / mouse drag | Also moves one spread. Swipe left for the next spread, right for the previous one. |
-| Controller | Triggers, shoulders, d-pad left/right, A/B and the left stick each move one spread. X dims, Y is single-page, Menu shows the help card. |
+| Controller | Triggers, shoulders, d-pad left/right, A/B and the left stick each move one spread. X dims, Y is single-page, Menu shows the help card, View tries full screen. |
 
 All settings are remembered per site, via the userscript manager's
 storage where available and `localStorage` otherwise.
@@ -185,6 +186,13 @@ and the other stands down.
 To identify which control is which, open the HUD: it shows the connected pad
 and the last control pressed, as `button 7` or `stick -0.98`. Setting
 `dcui2p.state.gamepad = false` in the console turns controller reading off.
+
+**Full screen from the controller may not work.** Browsers only allow a page
+to go full screen from a genuine user gesture, and Chrome does not count
+gamepad input as one — so the View button succeeds only if the stream happens
+to be delivering a keystroke or click at the same moment. It is bound anyway
+and fails loudly rather than silently. The reliable route is the `F` key
+once, before you sit down; full screen then stays until you leave it.
 
 **Turn off the streaming client's mouse mode** (Moonlight calls it
 gamepad-as-mouse). With it on, the controller never reaches the browser as a

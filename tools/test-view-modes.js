@@ -49,12 +49,19 @@ global.document = {
   body: el({ appendChild(n) { body.kids.push(n); } }),
   documentElement: el({
     classList: classList(rootClasses),
+    requestFullscreen() {
+      if (global.fullscreenAllowed === false) return Promise.reject(new Error('gesture required'));
+      global.document.fullscreenElement = this;
+      return Promise.resolve();
+    },
     style: {
       setProperty(k, v) { rootStyle[k] = String(v); },
       removeProperty(k) { delete rootStyle[k]; },
     },
   }),
   addEventListener() {},
+  fullscreenElement: null,
+  exitFullscreen() { this.fullscreenElement = null; return Promise.resolve(); },
   querySelector: (sel) => {
     if (sel.includes('dc-comic-reader')) return host;
     if (sel === '#dcui2p-help') return body.kids.find((n) => n.id === 'dcui2p-help' && !n.gone) || null;
@@ -90,6 +97,7 @@ const check = (name, ok) => { results.push(ok); console.log((ok ? 'ok    ' : 'FA
 const key = (k) => listeners.keydown[0]({ isTrusted: true, key: k, code: 'Key' + k.toUpperCase(),
   type: 'keydown', target: {}, preventDefault() {}, stopImmediatePropagation() {} });
 const helpShown = () => !!body.kids.find((n) => n.id === 'dcui2p-help' && !n.gone);
+const helpTextNow = () => { api.help(true); const t = body.kids.filter((n) => n.id === 'dcui2p-help' && !n.gone).pop().textContent; api.help(false); return t; };
 const settle = () => new Promise((r) => setTimeout(r, 40));
 
 (async () => {
@@ -170,6 +178,24 @@ const settle = () => new Promise((r) => setTimeout(r, 40));
   api.resume();
   await settle();
   check('resume() brings it back', state.suspended === false && rootClasses.has('dcui2p-on'));
+
+  // Fullscreen. The browser only allows it from a real user gesture, so the
+  // refusal path has to be as well behaved as the happy one.
+  global.fullscreenAllowed = true;
+  key('f');
+  await settle();
+  check('F goes full screen', global.document.fullscreenElement !== null);
+  check('...and the help card says so', /full screen             \[on\]/.test(helpTextNow()));
+  key('f');
+  await settle();
+  check('F again leaves full screen', global.document.fullscreenElement === null);
+
+  global.fullscreenAllowed = false;
+  let threw = false;
+  try { key('f'); await settle(); } catch (e) { threw = true; }
+  check('a refused request does not throw, it warns', threw === false &&
+    global.document.fullscreenElement === null);
+  global.fullscreenAllowed = true;
 
   const failed = results.filter((r) => !r).length;
   console.log(failed ? '\n' + failed + ' check(s) failed' : '\nall checks passed');
