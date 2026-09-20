@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         DCUI Two-Page View
 // @namespace    https://github.com/SamSchmitz98/DualComicReader
-// @version      0.3.1
+// @version      0.3.2
 // @description  Shows two portrait pages side by side in the DC Universe Infinite web reader, like an open print comic. Layout only - no downloading, extracting or re-hosting of artwork.
 // @author       SamSchmitz98
 // @match        https://www.dcuniverseinfinite.com/comics/book/*
@@ -53,6 +53,8 @@
     thumbs: '.reader-modal__page-browser img',
     pageCount: '.page-count',
   };
+
+  const VERSION = (typeof GM_info !== 'undefined' && GM_info.script && GM_info.script.version) || '0.3.2';
 
   const DEFAULT_ASPECT = 0.652;   // standard US comic page, used until the manifest loads
   const MIN_BOX = 260;            // below this a pair is unreadable; fall back to single page
@@ -852,6 +854,18 @@
       store.set('debug', state.debug);
       document.documentElement.classList.toggle('dcui2p-debug', state.debug && state.enabled);
       console.log('%c[dcui2p] debug ' + (state.debug ? 'ON' : 'OFF'), 'color:#0a0;font-weight:bold');
+      // Replay what happened before debug was switched on - startup and
+      // manifest reading are over by the time anyone presses D.
+      if (state.debug && logLines.length) {
+        console.groupCollapsed('%c[dcui2p] earlier events (' + logLines.length + ')', 'color:#0a0');
+        logLines.forEach((line) => console.log(line));
+        console.groupEnd();
+        console.log('%c[dcui2p]%c state:', 'color:#0a0;font-weight:bold', 'color:inherit', {
+          page: currentPage(), total: state.total, rows: state.rows.length,
+          spreads: spreadPages(), navHook: state.navStrategy, boxW: state.boxW,
+          parity: state.parity, manifestPages: state.manifest.filter(Boolean).length,
+        });
+      }
       updateHud();
       return;
     }
@@ -921,6 +935,16 @@
     state.debug = store.get('debug', false);
     state.navStrategy = store.get('navStrategy', null);
     installStyles();
+
+    // One unconditional line. Everything else is gated behind debug mode, so
+    // without this a silent script and a script that never loaded look
+    // identical in the console.
+    console.log('%c[dcui2p]%c v' + VERSION + ' loaded — ' +
+      (state.enabled ? 'enabled' : 'DISABLED (press T)') +
+      (state.debug ? ', debug on' : '') +
+      '  |  T toggle · P pairing offset · D debug HUD' +
+      (state.debug ? '' : '  |  press D for the HUD and verbose logging'),
+      'color:#0a0;font-weight:bold', 'color:inherit');
 
     // Capture phase, so we get arrow keys before the reader's own handlers.
     window.addEventListener('keydown', onKeyDown, true);

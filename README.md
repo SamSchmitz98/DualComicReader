@@ -74,11 +74,20 @@ nudges you onto the row boundary once, on load.
 
 ## Debugging
 
+Debug output is **off by default**, so the only thing the script prints
+normally is a single line at startup confirming it loaded, with its version
+and the hotkeys. If you do not see that line in the console, the script is not
+running.
+
 Press `D` for an on-screen HUD showing which pages are visible, the pairing
 decision and why it was made, the box geometry, the manifest, and a role/slot
 line per canvas. Debug mode also outlines each canvas — green for the current
 page, cyan for the one paired beside it, dashed red for the hidden previous
 page, shown faintly so you can see where it sits.
+
+Switching debug on also replays the events that happened before you pressed
+`D` — startup and manifest reading are long over by then — and dumps a state
+summary.
 
 The browser console also gets a `dcui2p` handle:
 
@@ -91,6 +100,8 @@ The browser console also gets a `dcui2p` handle:
 | `dcui2p.rows()` | The whole issue laid out in rows, e.g. `[[1],[2],[3],[4,5],…]`. |
 | `dcui2p.rowFor(n)` | The row a given page sits in. |
 | `dcui2p.step(1)` / `dcui2p.step(-1)` | Drive a paired page turn by hand. |
+| `dcui2p.verifyRestore()` | Diff the reader against the snapshot taken before the script touched it. |
+| `dcui2p.stats()` | Apply/mutation rates, resizes dispatched, canvas pool size. |
 
 If arrow keys are not turning pages, `dcui2p.probeNav()` is the place to start
 — it will name the hook that works, and the script remembers it from then on.
