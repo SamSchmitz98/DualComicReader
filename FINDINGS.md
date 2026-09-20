@@ -286,10 +286,21 @@ not.
 the DOM on a fresh page load while the page browser is still closed.
 
 They are *not* necessarily decoded yet, though. A thumbnail that has not
-finished decoding reports `naturalHeight === 0`, and a single read at startup
-caught only three of this issue's four spreads — the fourth defaulted to
-portrait and would have been wrongly paired. The manifest has to be re-read
-until every thumbnail reports real dimensions. (Earlier probes missed them only because those filtered for images
+finished decoding reports `naturalHeight === 0`, and decoding 238 of them
+takes a few seconds. Observed in a live session, re-reading every 750ms:
+
+```
+found 238 thumbnails but none decoded yet
+128/238 pages read (110 still decoding), spreads at 3, 48, 51
+232/238 pages read (6 still decoding),   spreads at 3, 48, 51, 218
+238/238 pages read,                      spreads at 3, 48, 51, 218
+```
+
+The spread at page 218 does not appear until the third read. A single read at
+startup would have left it classified as portrait, mis-pairing every page from
+218 to the end of the issue. The manifest must be re-read until every
+thumbnail reports real dimensions — and nothing that depends on the row model
+being final, such as aligning onto a row boundary, may run before then. (Earlier probes missed them only because those filtered for images
 wider than 200px and the thumbnails are 163px wide.) The script can read the
 whole manifest silently at startup — no UI flashing, no modal toggling.
 

@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         DCUI Two-Page View
 // @namespace    https://github.com/SamSchmitz98/DualComicReader
-// @version      0.4.0
+// @version      0.4.1
 // @description  Shows two portrait pages side by side in the DC Universe Infinite web reader, like an open print comic. Layout only - no downloading, extracting or re-hosting of artwork.
 // @author       SamSchmitz98
 // @match        https://www.dcuniverseinfinite.com/comics/book/*
@@ -54,7 +54,7 @@
     pageCount: '.page-count',
   };
 
-  const VERSION = (typeof GM_info !== 'undefined' && GM_info.script && GM_info.script.version) || '0.4.0';
+  const VERSION = (typeof GM_info !== 'undefined' && GM_info.script && GM_info.script.version) || '0.4.1';
 
   const DEFAULT_ASPECT = 0.652;   // standard US comic page, used until the manifest loads
   const MIN_BOX = 260;            // below this a pair is unreadable; fall back to single page
@@ -807,8 +807,24 @@
 
   // Opening an issue part-way through can drop you on the right half of a
   // pair, which looks wrong on arrival. Nudge onto the row boundary once.
+  let alignWaitStart = 0;
+
   async function maybeAlign() {
     if (state.aligned || !state.enabled || state.navigating) return;
+
+    // Do not align on a provisional row model. Until the thumbnails have
+    // decoded, every page looks portrait, so a spread earlier in the issue is
+    // missing and the row leaders after it are wrong - and alignment only ever
+    // runs once, so getting it wrong here is permanent.
+    if (state.manifestExpected && state.manifestDecoded < state.manifestExpected) {
+      if (!alignWaitStart) alignWaitStart = Date.now();
+      if (Date.now() - alignWaitStart < 20000) {
+        setTimeout(maybeAlign, 750);
+        return;
+      }
+      log('align: manifest still incomplete after 20s, aligning anyway');
+    }
+
     const page = currentPage();
     const row = rowFor(page);
     if (!page || !row) return;
@@ -1022,6 +1038,7 @@
       state.rowOf = [];
       state.rowsKey = '';
       state.aligned = false;
+      alignWaitStart = 0;
       log('navigated to ' + location.pathname);
       if (onReaderPage()) {
         setTimeout(() => {
