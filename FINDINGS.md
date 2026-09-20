@@ -85,8 +85,17 @@ Partly established.
   falls back through those, an edge click and a touch swipe if the preferred
   hook ever stops working.
 - **A page turn takes about 475ms** from dispatch to the page counter
-  updating, so a paired turn costs roughly 950ms. That is the reader's own
-  transition, not our polling.
+  updating. That is the reader's own transition, not our polling.
+- **The reader navigates on `keyup` as well as `keydown`.** Sending both, as
+  a synthetic keypress naturally would, turns one dispatch into two page
+  turns. Combined with a poller that sometimes caught the intermediate page
+  and dispatched again, this produced an extra turn that arrived *after* the
+  script believed it had finished — indistinguishable, in the logs, from the
+  reader moving on its own. Send `keydown` only.
+- **Clicking a page-browser thumbnail navigates, but not to the page its
+  `alt` text names.** Clicking `alt="Page 92"` lands on page 93. The cause was
+  not chased down; the script measures the difference on the first jump and
+  compensates from then on.
 - A trap worth recording: in a sandboxing userscript engine, passing the
   script's own `window` as a UIEvent's `view` throws *"Failed to convert value
   to 'Window'"*, and every dispatch fails before reaching the page. Use

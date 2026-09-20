@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         DCUI Two-Page View
 // @namespace    https://github.com/SamSchmitz98/DualComicReader
-// @version      0.6.0
+// @version      0.6.1
 // @description  Shows two portrait pages side by side in the DC Universe Infinite web reader, like an open print comic. Layout only - no downloading, extracting or re-hosting of artwork.
 // @author       SamSchmitz98
 // @match        https://www.dcuniverseinfinite.com/comics/book/*
@@ -55,7 +55,7 @@
     pageCount: '.page-count',
   };
 
-  const VERSION = (typeof GM_info !== 'undefined' && GM_info.script && GM_info.script.version) || '0.6.0';
+  const VERSION = (typeof GM_info !== 'undefined' && GM_info.script && GM_info.script.version) || '0.6.1';
 
   const DEFAULT_ASPECT = 0.652;   // standard US comic page, used until the manifest loads
   const MIN_BOX = 260;            // below this a pair is unreadable; fall back to single page
@@ -84,6 +84,7 @@
     tornDown: false,    // teardown is idempotent; this is the latch
     smooth: true,       // fade across page turns instead of watching them
     jumpWorks: null,    // can we navigate by clicking a page-browser thumbnail?
+    jumpOffset: 0,      // measured gap between a thumbnail's alt text and where it lands
     history: [],        // every page change, recorded whether or not debug is on
     navReason: '',      // what the script is currently doing, to attribute changes
     manifestDecoded: 0, // thumbnails that have decoded (and so have real dimensions)
@@ -397,7 +398,8 @@
         spreadPages().length + ' spreads' +
         (state.manifestDecoded < state.manifestExpected ? '  (still loading)' : ''),
       'nav hook   ' + (state.navStrategy || 'not yet determined') +
-        '   jump ' + (state.jumpWorks === null ? 'untested' : state.jumpWorks ? 'YES (1 transition)' : 'no (stepping)') +
+        '   jump ' + (state.jumpWorks === null ? 'untested' : state.jumpWorks ? 'YES' : 'no') +
+        (state.jumpOffset ? '(' + (state.jumpOffset > 0 ? '+' : '') + state.jumpOffset + ')' : '') +
         '   fade ' + (state.smooth ? 'on' : 'off'),
       'churn      ' + state.stats.rate + '   resizes sent ' + state.stats.resizes +
         '   canvases ' + state.stats.canvases,
@@ -476,7 +478,8 @@
       'settings:  enabled=' + state.enabled + '  offset=' + state.parity +
         (state.parity === 0 ? ' (cover alone)' : ' (pairs from page 1)') +
         '  smooth=' + state.smooth,
-      'nav:       hook=' + state.navStrategy + '  jumpWorks=' + state.jumpWorks,
+      'nav:       hook=' + state.navStrategy + '  jumpWorks=' + state.jumpWorks +
+        '  jumpOffset=' + state.jumpOffset,
       'manifest:  ' + state.manifestDecoded + '/' + state.manifestExpected +
         ' decoded, spreads at ' + (spreadPages().join(', ') || 'none'),
       'layout:    viewport ' + window.innerWidth + 'x' + window.innerHeight +
@@ -823,12 +826,15 @@
     }];
   }
 
+  // keydown ONLY. The reader navigates on keyup as well, so sending both turned
+  // one dispatch into two page turns - and because the poller sometimes caught
+  // the intermediate page, we would dispatch again and overshoot by one. That
+  // stray turn arrived after we had declared success, so it looked like the
+  // reader moving on its own.
   function dispatchKey(target, dir) {
     if (!target) return;
-    for (const type of ['keydown', 'keyup']) {
-      const [t, init] = keyEventInit(dir, type);
-      target.dispatchEvent(makeEvent(KeyboardEvent, t, init));
-    }
+    const [type, init] = keyEventInit(dir, 'keydown');
+    target.dispatchEvent(makeEvent(KeyboardEvent, type, init));
   }
 
   function edgePoint(dir) {
@@ -897,9 +903,9 @@
       const tick = () => {
         if (currentPage() === target) return resolve({ page: target, ms: Date.now() - started });
         if (Date.now() - started > timeout) return resolve(null);
-        setTimeout(tick, 50);
+        setTimeout(tick, 30);
       };
-      setTimeout(tick, 50);
+      setTimeout(tick, 30);
     });
   }
 
@@ -910,9 +916,9 @@
         const now = currentPage();
         if (now && now !== from) return resolve({ page: now, ms: Date.now() - started });
         if (Date.now() - started > timeout) return resolve(null);
-        setTimeout(tick, 50);
+        setTimeout(tick, 30);
       };
-      setTimeout(tick, 50);
+      setTimeout(tick, 30);
     });
   }
 
@@ -967,7 +973,14 @@
 
   async function jumpToPage(target) {
     if (state.jumpWorks === false) return 0;
-    const img = thumbFor(target);
+
+    // The thumbnail's alt text and the page the reader navigates to are not
+    // the same number: clicking alt="Page 92" lands on 93. Rather than guess
+    // at the reason, measure it once and compensate - if a click lands
+    // somewhere other than asked, the difference is remembered and applied to
+    // every later jump.
+    const wanted = target - state.jumpOffset;
+    const img = thumbFor(wanted);
     if (!img) return 0;
 
     // The clickable element may be the image or a wrapper around it.
@@ -984,7 +997,22 @@
       if (!landed) {
         const now = currentPage();
         if (now !== before) {
-          warn('jump: click moved to ' + now + ' and stopped, wanted ' + target);
+          // It navigated, just not where we asked. Calibrate against the
+          // thumbnail we actually clicked and let the caller correct this one.
+          const offset = now - wanted;
+          if (Math.abs(offset) > 3) {
+            state.jumpWorks = false;
+            store.set('jumpWorks', false);
+            warn('jump: clicking the page-' + wanted + ' thumbnail landed on ' + now +
+                 ' - too far off to trust, stepping from now on');
+          } else if (offset !== state.jumpOffset) {
+            state.jumpOffset = offset;
+            store.set('jumpOffset', offset);
+            log('jump: calibrated - clicking the page-' + wanted + ' thumbnail lands on ' + now +
+                ', so thumbnails run ' + (offset > 0 ? '+' : '') + offset + ' from their alt text');
+          } else {
+            warn('jump: click moved to ' + now + ', wanted ' + target + ' (offset ' + offset + ' did not hold)');
+          }
           return now;
         }
         continue;     // nothing happened - try the next candidate element
@@ -1271,6 +1299,7 @@
     state.navStrategy = store.get('navStrategy', null);
     state.smooth = store.get('smooth', true);
     state.jumpWorks = store.get('jumpWorks', null);
+    state.jumpOffset = store.get('jumpOffset', 0);
     installStyles();
 
     // One unconditional line. Everything else is gated behind debug mode, so
