@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         DCUI Two-Page View
 // @namespace    https://github.com/SamSchmitz98/DualComicReader
-// @version      0.9.2
+// @version      0.9.3
 // @description  Shows two portrait pages side by side in the DC Universe Infinite web reader, like an open print comic. Layout only - no downloading, extracting or re-hosting of artwork.
 // @author       SamSchmitz98
 // @match        https://www.dcuniverseinfinite.com/comics/book/*
@@ -64,7 +64,7 @@
     pageCount: '.page-count',
   };
 
-  const VERSION = (typeof GM_info !== 'undefined' && GM_info.script && GM_info.script.version) || '0.9.2';
+  const VERSION = (typeof GM_info !== 'undefined' && GM_info.script && GM_info.script.version) || '0.9.3';
 
   const DEFAULT_ASPECT = 0.652;   // standard US comic page, used until the manifest loads
   const MIN_BOX = 260;            // below this a pair is unreadable; fall back to single page
@@ -98,12 +98,11 @@
     jumpOffset: 0,      // measured gap between a thumbnail's alt text and where it lands
     history: [],        // every page change, recorded whether or not debug is on
     navReason: '',      // what the script is currently doing, to attribute changes
-    // Default ON: dcui2p.probeNav() showed this reader ignores every synthetic
-    // keyboard, mouse and touch event, so there is nothing to be gained by
-    // swallowing the arrow keys - the reader must handle them itself. Pairing
-    // no longer depends on navigation anyway; see pairDecision. probeNav()
-    // clears this if it ever finds a hook that works.
-    passThrough: true,
+    // Set when a jump has been tried and did nothing: the arrow keys are then
+    // left to the reader for the rest of the session. Pairing does not depend
+    // on navigation (see pairDecision), so this degrades to one page per
+    // press rather than breaking anything.
+    passThrough: false,
     manifestDecoded: 0, // thumbnails that have decoded (and so have real dimensions)
     manifestExpected: 0,
     stats: { applies: 0, mutations: 0, resizes: 0, canvases: 0, rate: '0/s 0/s', since: Date.now() },
@@ -1113,7 +1112,6 @@
           const offset = now - wanted;
           if (Math.abs(offset) > 3) {
             state.jumpWorks = false;
-            store.set('jumpWorks', false);
             warn('jump: clicking the page-' + wanted + ' thumbnail landed on ' + now +
                  ' - too far off to trust, stepping from now on');
           } else if (offset !== state.jumpOffset) {
@@ -1146,7 +1144,6 @@
     }
 
     state.jumpWorks = false;
-    store.set('jumpWorks', false);
     log('jump: thumbnails are not clickable, stepping instead');
     return 0;
   }
@@ -1167,9 +1164,9 @@
     // canvas widget ignores them; the thumbnail's click handler is Vue's and
     // does not care). So there is no stepping fallback: if the jump fails
     // there is nothing else to try, and the arrow keys go back to the reader.
-    if (state.jumpWorks !== true) {
+    if (state.jumpWorks === false) {
       state.passThrough = true;
-      warn('cannot navigate: the thumbnail jump is not known to work. Run dcui2p.probeNav().');
+      warn('cannot navigate: the thumbnail jump failed earlier this session. Run dcui2p.probeNav().');
       return page;
     }
 
@@ -1357,7 +1354,7 @@
     if (e.key === 'ArrowRight' || e.key === 'ArrowLeft') {
       // Only take the key if we can actually move the reader ourselves;
       // otherwise the reader's one-page turn is the only navigation there is.
-      if (state.passThrough || state.jumpWorks !== true) return;
+      if (state.passThrough || state.jumpWorks === false) return;
 
       const dir = e.key === 'ArrowRight' ? 1 : -1;
       const page = currentPage();
@@ -1366,6 +1363,11 @@
       // The thumbnail for page N lands on N+1, which makes page 1 unreachable
       // by jumping. A single reader turn gets there, so let that press through.
       if (!target || target === page || (target === 1 && page - target === 1)) return;
+
+      // If the page browser has not rendered its thumbnails yet there is
+      // nothing to click, so do not take the key - let the reader turn the
+      // page rather than swallow a press we cannot act on.
+      if (!thumbFor(target - state.jumpOffset)) return;
 
       // Stop the reader acting on this keypress; one press moves a whole row.
       // Remember the key so its keyup is swallowed too - see onKeyUpOrPress.
@@ -1426,15 +1428,18 @@
     state.debug = store.get('debug', false);
     state.navStrategy = store.get('navStrategy', null);
     state.smooth = store.get('smooth', true);
-    state.jumpWorks = store.get('jumpWorks', null);
+    // Only a success is remembered. Treating "unknown" as "no" left every
+    // fresh install in pass-through forever: the jump was only attempted once
+    // it was known to work, and it could only become known by attempting it.
+    // A failure is deliberately NOT persisted - it may have been a one-off
+    // (thumbnails not rendered yet), and the cost of re-trying next session is
+    // a single swallowed keypress.
+    state.jumpWorks = store.get('jumpWorks', null) === true ? true : null;
     // Calibrated per session, not loaded: every stored value so far was
     // learned while a leaked keyup was adding a turn in the direction of
     // travel, so it is noise. A genuine offset costs one retried jump to
     // relearn.
     state.jumpOffset = 0;
-    // Only intercept arrows once the jump is known to work; until then the
-    // reader keeps its keys and pages turn one at a time.
-    state.passThrough = state.jumpWorks !== true;
 
     // Bind the key handler FIRST, before anything else and before the reader
     // has loaded. Listeners on the same target fire in registration order, so
@@ -1465,7 +1470,8 @@
     // One unconditional line. Everything else is gated behind debug mode, so
     // without this a silent script and a script that never loaded look
     // identical in the console.
-    console.log('%c[dcui2p]%c v' + VERSION + ' loaded — ' +
+    console.log('%c[dcui2p]%c v' + VERSION +
+      (typeof GM_info !== 'undefined' ? ' (userscript)' : ' (extension)') + ' loaded — ' +
       (state.enabled ? 'enabled' : 'DISABLED (press T)') +
       (state.debug ? ', debug on' : '') +
       '  |  T toggle · P pairing offset · S smooth turns · D debug HUD' +

@@ -217,6 +217,11 @@ If arrow keys are not turning pages, `dcui2p.probeNav()` is the place to start
   the script's fallback constant and in the manifest. `node
   tools/check-version.js` verifies they agree; `node tools/check-version.js
   1.2.3` sets all three.
+- `tools/test-fresh-install.js` — simulates a brand-new install (empty
+  storage, no userscript APIs), presses an arrow key and checks that the
+  script takes it and jumps to the right page. It exists because the author's
+  copy always has remembered settings, so a bug that only affects new installs
+  is invisible without it.
 - `FINDINGS.md` — how the reader renders pages, navigates, and exposes page
   metadata; the investigation behind the implementation.
 - `LICENSE` — MIT.
