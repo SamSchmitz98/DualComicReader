@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         DCUI Two-Page View
 // @namespace    https://github.com/SamSchmitz98/DualComicReader
-// @version      0.4.2
+// @version      0.5.0
 // @description  Shows two portrait pages side by side in the DC Universe Infinite web reader, like an open print comic. Layout only - no downloading, extracting or re-hosting of artwork.
 // @author       SamSchmitz98
 // @match        https://www.dcuniverseinfinite.com/comics/book/*
@@ -54,7 +54,7 @@
     pageCount: '.page-count',
   };
 
-  const VERSION = (typeof GM_info !== 'undefined' && GM_info.script && GM_info.script.version) || '0.4.2';
+  const VERSION = (typeof GM_info !== 'undefined' && GM_info.script && GM_info.script.version) || '0.5.0';
 
   const DEFAULT_ASPECT = 0.652;   // standard US comic page, used until the manifest loads
   const MIN_BOX = 260;            // below this a pair is unreadable; fall back to single page
@@ -79,6 +79,8 @@
     aligned: false,     // have we nudged onto a row boundary since load?
     stock: null,        // snapshot of the untouched reader, to verify T restores it
     tornDown: false,    // teardown is idempotent; this is the latch
+    smooth: true,       // fade across page turns instead of watching them
+    jumpWorks: null,    // can we navigate by clicking a page-browser thumbnail?
     manifestDecoded: 0, // thumbnails that have decoded (and so have real dimensions)
     manifestExpected: 0,
     stats: { applies: 0, mutations: 0, resizes: 0, canvases: 0, rate: '0/s 0/s', since: Date.now() },
@@ -367,7 +369,7 @@
     else if (page) visible = 'page ' + page + '  (single)';
 
     hudElement().textContent = [
-      'DCUI 2-PAGE  ' + (state.enabled ? 'ON' : 'OFF') + '   [T]oggle [P]arity [D]ebug',
+      'DCUI 2-PAGE  ' + (state.enabled ? 'ON' : 'OFF') + '   [T]oggle [P]arity [S]mooth [D]ebug',
       '',
       'VISIBLE: ' + visible,
       '',
@@ -386,7 +388,9 @@
       'manifest   ' + state.manifestDecoded + '/' + (state.manifestExpected || '?') + ' decoded, ' +
         spreadPages().length + ' spreads' +
         (state.manifestDecoded < state.manifestExpected ? '  (still loading)' : ''),
-      'nav hook   ' + (state.navStrategy || 'not yet determined'),
+      'nav hook   ' + (state.navStrategy || 'not yet determined') +
+        '   jump ' + (state.jumpWorks === null ? 'untested' : state.jumpWorks ? 'YES (1 transition)' : 'no (stepping)') +
+        '   fade ' + (state.smooth ? 'on' : 'off'),
       'churn      ' + state.stats.rate + '   resizes sent ' + state.stats.resizes +
         '   canvases ' + state.stats.canvases,
       '',
@@ -419,6 +423,11 @@
     'html.dcui2p-on ' + SEL.host + ' canvas.dcui2p-cur  { transform: translateX(0) !important; }',
     'html.dcui2p-on ' + SEL.host + ' canvas.dcui2p-next { transform: translateX(var(--dcui2p-w, 0px)) !important; }',
     'html.dcui2p-on ' + SEL.host + ' canvas.dcui2p-off  { visibility: hidden !important; }',
+    // A page turn is a content swap we cannot animate, so fade over it: the
+    // pages appear to change together rather than one visibly following the
+    // other. The backdrop behind is already black, so this reads as a blink.
+    'html.dcui2p-on.dcui2p-smooth ' + SEL.host + ' { transition: opacity 130ms ease; }',
+    'html.dcui2p-on.dcui2p-smooth.dcui2p-turning ' + SEL.host + ' { opacity: 0 !important; }',
     // Debug view: show the hidden canvases faintly and outline every slot, so
     // it is obvious which canvas the script thinks is which.
     'html.dcui2p-debug ' + SEL.host + ' canvas.dcui2p-cur  { outline: 2px solid #0f0 !important; outline-offset: -2px; }',
@@ -503,6 +512,10 @@
     return roles;
   }
 
+  function setTurning(on) {
+    document.documentElement.classList.toggle('dcui2p-turning', !!on && state.smooth);
+  }
+
   let applying = false;
 
   function apply() {
@@ -574,6 +587,7 @@
       const root = document.documentElement;
       root.classList.add('dcui2p-on');
       root.classList.toggle('dcui2p-debug', state.debug);
+      root.classList.toggle('dcui2p-smooth', state.smooth);
       root.style.setProperty('--dcui2p-w', boxW + 'px');
       root.style.setProperty('--dcui2p-left', left + 'px');
       backdrop(true);
@@ -671,7 +685,7 @@
     applying = true;
     try {
       const root = document.documentElement;
-      root.classList.remove('dcui2p-on', 'dcui2p-debug');
+      root.classList.remove('dcui2p-on', 'dcui2p-debug', 'dcui2p-smooth', 'dcui2p-turning');
       root.style.removeProperty('--dcui2p-w');
       root.style.removeProperty('--dcui2p-left');
       backdrop(false);
@@ -816,15 +830,84 @@
     return 0;
   }
 
-  // Walk to the page the row model says an arrow press should land on. The
-  // reader only moves one page at a time, so a pair takes two turns; the loop
-  // is driven by the target rather than by a step count, which keeps it
-  // correct across spreads and when starting mid-row.
+  // Jumping straight to a page is the real smoothness fix: a pair advance
+  // becomes ONE transition instead of two, so both pages change together
+  // instead of the reader visibly shuffling through the page between them.
+  //
+  // The page-browser thumbnails sit in the DOM even while the modal is closed,
+  // and their click handlers are bound regardless of visibility - so a click
+  // dispatched straight at the target page's thumbnail navigates without the
+  // modal ever being shown.
+  function thumbFor(page) {
+    for (const img of qa(SEL.thumbs)) {
+      const m = /Page\s+(\d+)/i.exec(img.alt || '');
+      if (m && +m[1] === page) return img;
+    }
+    return null;
+  }
+
+  async function jumpToPage(target) {
+    if (state.jumpWorks === false) return 0;
+    const img = thumbFor(target);
+    if (!img) return 0;
+
+    // The clickable element may be the image or a wrapper around it.
+    const candidates = [img, img.closest('button'), img.closest('[role=button]'),
+                        img.parentElement, img.parentElement && img.parentElement.parentElement]
+      .filter((el, i, all) => el && all.indexOf(el) === i);
+
+    for (const el of candidates) {
+      const before = currentPage();
+      el.dispatchEvent(makeEvent(MouseEvent, 'click',
+        { bubbles: true, cancelable: true, composed: true, button: 0 }));
+      const landed = await waitForPageChange(before, PROBE_TIMEOUT);
+      if (!landed) continue;
+
+      if (landed.page === target) {
+        if (state.jumpWorks !== true) {
+          state.jumpWorks = true;
+          store.set('jumpWorks', true);
+          log('jump: clicking the page-' + target + ' thumbnail works - one transition per move');
+        }
+        // A click might also have opened the browser modal; close it if so.
+        const modal = q('.reader-modal__page-browser');
+        if (modal && modal.getBoundingClientRect().width > 0) {
+          document.body.dispatchEvent(makeEvent(KeyboardEvent, 'keydown',
+            { key: 'Escape', code: 'Escape', keyCode: 27, which: 27, bubbles: true, cancelable: true }));
+          log('jump: closed the page browser it opened');
+        }
+        return target;
+      }
+      warn('jump: landed on ' + landed.page + ', wanted ' + target);
+      return landed.page;
+    }
+
+    state.jumpWorks = false;
+    store.set('jumpWorks', false);
+    log('jump: thumbnails are not clickable, stepping instead');
+    return 0;
+  }
+
+  // Walk to the page the row model says an arrow press should land on. Prefer
+  // a single jump; fall back to stepping one page at a time, driven by the
+  // target rather than a step count so it stays correct across spreads and
+  // when starting mid-row.
   async function goToPage(target, why) {
     let page = currentPage();
     if (!page || page === target) return page;
 
     log((why || 'goto') + ': page ' + page + ' -> ' + target);
+    if (state.smooth) { setTurning(true); await sleep(140); }
+
+    // Only worth jumping when it saves a transition; a single step is already
+    // one transition and the arrow path is the better-tested one.
+    if (Math.abs(target - page) > 1 && state.jumpWorks !== false) {
+      const landed = await jumpToPage(target);
+      if (landed === target) return target;
+      page = currentPage();
+      if (page === target) return page;
+    }
+
     let guard = 0;
     while (page !== target && guard++ < 8) {
       const landed = await navOnce(page < target ? 1 : -1);
@@ -850,6 +933,8 @@
     } finally {
       state.navigating = false;
       apply();
+      // Next frame, so the reveal happens after the new layout is painted.
+      requestAnimationFrame(() => setTurning(false));
     }
   }
 
@@ -886,6 +971,7 @@
     } finally {
       state.navigating = false;
       apply();
+      requestAnimationFrame(() => setTurning(false));
     }
   }
 
@@ -943,7 +1029,7 @@
 
     // Our hotkeys are ours: keep them from reaching the reader, which may bind
     // the same letters to its own controls.
-    if (key === 'd' || key === 't' || key === 'p') {
+    if (key === 'd' || key === 't' || key === 'p' || key === 's') {
       e.preventDefault();
       e.stopImmediatePropagation();
     }
@@ -978,6 +1064,15 @@
     }
 
     if (!state.enabled) return;
+
+    if (key === 's') {
+      state.smooth = !state.smooth;
+      store.set('smooth', state.smooth);
+      if (!state.smooth) setTurning(false);
+      log('smooth: fade across page turns ' + (state.smooth ? 'ON' : 'OFF'));
+      apply();
+      return;
+    }
 
     if (key === 'p') {
       state.parity = state.parity ? 0 : 1;
@@ -1033,6 +1128,8 @@
     state.parity = store.get('parity', 0);
     state.debug = store.get('debug', false);
     state.navStrategy = store.get('navStrategy', null);
+    state.smooth = store.get('smooth', true);
+    state.jumpWorks = store.get('jumpWorks', null);
     installStyles();
 
     // One unconditional line. Everything else is gated behind debug mode, so
@@ -1041,7 +1138,7 @@
     console.log('%c[dcui2p]%c v' + VERSION + ' loaded — ' +
       (state.enabled ? 'enabled' : 'DISABLED (press T)') +
       (state.debug ? ', debug on' : '') +
-      '  |  T toggle · P pairing offset · D debug HUD' +
+      '  |  T toggle · P pairing offset · S smooth turns · D debug HUD' +
       (state.debug ? '' : '  |  press D for the HUD and verbose logging'),
       'color:#0a0;font-weight:bold', 'color:inherit');
 
@@ -1109,6 +1206,7 @@
         teardown: teardown,
         step: step,
         goToPage: goToPage,
+        jumpToPage: jumpToPage,
         navOnce: navOnce,
         strategies: STRATEGIES.map((s) => s.name),
         page: currentPage,

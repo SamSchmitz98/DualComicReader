@@ -23,10 +23,11 @@ works and why this approach was chosen.
 |---|---|
 | `T` | Toggle the script on and off. Off restores the reader's stock behavior exactly. |
 | `P` | Shift the pairing offset, for books whose numbering does not line up. Default keeps the cover alone; pressing `P` pairs from page 1 instead. |
+| `S` | Toggle the fade across page turns. On by default. |
 | `D` | Toggle the debug HUD. |
 | `←` `→` | Move one *pair* at a time instead of one page. |
 
-All three settings are remembered per site, via the userscript manager's
+All settings are remembered per site, via the userscript manager's
 storage where available and `localStorage` otherwise.
 
 The reader's own controls — the on-screen buttons, click-to-advance, swipe and
@@ -68,9 +69,25 @@ after that is a lookup. In the test issue, whose page 3 is a spread, the
 layout comes out as `[1] [2] [3] [4,5] [6,7] …` — page 2 correctly goes solo
 because its partner is a spread.
 
-Arrow keys move to the first page of the next or previous row, however many
-page turns that takes. Arriving mid-pair — opening an issue at page 104, say —
-nudges you onto the row boundary once, on load.
+Arrow keys move to the first page of the next or previous row. Arriving
+mid-pair — opening an issue at page 104, say — nudges you onto the row
+boundary once, on load.
+
+### Smoothness
+
+The reader turns one page at a time and takes roughly 475ms to do it, so
+advancing a pair by stepping means watching the right-hand page slide into the
+left slot and a new page appear after it. Two things avoid that:
+
+- **Jumping.** The page-browser thumbnails are in the DOM with the modal
+  closed and their click handlers are live, so the script clicks the target
+  page's thumbnail and the reader goes straight there — one transition per
+  move instead of two, with no intermediate page. If the thumbnails turn out
+  not to be clickable, it falls back to stepping and remembers that.
+- **Fading.** A content swap in a canvas cannot be animated, so the script
+  fades the reader out and back across the turn. The backdrop behind is
+  already black, so it reads as a blink rather than a shuffle. Press `S` to
+  turn it off and compare.
 
 ## Debugging
 
