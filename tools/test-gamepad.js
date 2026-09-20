@@ -125,10 +125,9 @@ async function press(i, { value = 1, streamTurns = 0 } = {}) {
   check('X dims instead of paging', state.dim !== dimBefore && page === 96 && clicked.length === 0);
   while (state.dim !== 0) await press(2);
 
+  page = 96;
   await press(3);
-  check('Y toggles single-page mode instead of paging', state.single === true && page === 96);
-  await press(3);
-  check('...and Y again puts it back', state.single === false);
+  check('Y is unbound now that single-page mode is gone', page === 96 && clicked.length === 0);
 
   await press(9);
   check('Menu raises the help card instead of paging', page === 96 && clicked.length === 0);

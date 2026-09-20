@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         DCUI Two-Page View
 // @namespace    https://github.com/SamSchmitz98/DualComicReader
-// @version      1.6.1
+// @version      1.7.0
 // @description  Shows two portrait pages side by side in the DC Universe Infinite web reader, like an open print comic. Layout only - no downloading, extracting or re-hosting of artwork.
 // @author       SamSchmitz98
 // @match        https://www.dcuniverseinfinite.com/comics/book/*
@@ -64,7 +64,7 @@
     pageCount: '.page-count',
   };
 
-  const VERSION = (typeof GM_info !== 'undefined' && GM_info.script && GM_info.script.version) || '1.6.1';
+  const VERSION = (typeof GM_info !== 'undefined' && GM_info.script && GM_info.script.version) || '1.7.0';
 
   const DEFAULT_ASPECT = 0.652;   // standard US comic page, used until the manifest loads
   const MIN_BOX = 260;            // below this a pair is unreadable; fall back to single page
@@ -80,7 +80,6 @@
   const PAD_NEXT = [7, 5, 15, 0];  // RT, RB, d-pad right, A
   const PAD_PREV = [6, 4, 14, 1];  // LT, LB, d-pad left, B
   const PAD_DIM = 2;               // X
-  const PAD_SINGLE = 3;            // Y
   const PAD_HELP = 9;              // Menu / Start
   const PAD_FULL = 8;              // View / Back
   const DIM_LEVELS = [1, 0.85, 0.7, 0.55];
@@ -117,7 +116,6 @@
     jumpWorks: null,    // can we navigate by clicking a page-browser thumbnail?
     jumpOffset: 0,      // measured gap between a thumbnail's alt text and where it lands
     dim: 0,             // index into DIM_LEVELS
-    single: false,      // show one page at a time instead of a spread
     suspended: false,   // stand aside without switching off - see suspend()
     suspendedBy: '',
     gamepad: true,      // read controllers; set false from the console to stop
@@ -342,8 +340,6 @@
     if (!state.enabled) return { pair: false, why: 'script disabled' };
     if (page < 1) return { pair: false, why: 'no page number' };
 
-    if (state.single) return { pair: false, why: 'single-page mode (Z)' };
-
     const row = rowFor(page);
     if (!row) return { pair: false, why: 'page not in the row model yet' };
 
@@ -362,11 +358,6 @@
   // row. Stepping back from the right half of a pair aligns to its left page
   // first, which is what you want if you arrived mid-row.
   function targetPage(page, dir) {
-    // One page at a time when that is what is on screen.
-    if (state.single) {
-      const next = page + dir;
-      return next >= 1 && (!state.total || next <= state.total) ? next : page;
-    }
     ensureRows();
     const idx = state.rowOf[page];
     if (idx === undefined) {
@@ -454,8 +445,7 @@
       'next page  ' + (page + 1) + '   aspect ' + aspectOf(page + 1).toFixed(3) +
         (isSpread(page + 1) ? ' SPREAD' : ''),
       'pairing    ' + (L.showPair ? 'YES' : 'no') + '  (' + (L.why || '-') + ')',
-      'view       ' + (state.single ? 'ONE PAGE (Z)' : 'spread') +
-        '   dim ' + Math.round(DIM_LEVELS[state.dim] * 100) + '%' +
+      'view       dim ' + Math.round(DIM_LEVELS[state.dim] * 100) + '%' +
         (state.suspended ? '   SUSPENDED (' + state.suspendedBy + ')' : ''),
       'offset     ' + state.parity + '  (' +
         (state.parity === 0 ? 'cover alone: [1] [2,3] [4,5]' : 'pairs from page 1: [1,2] [3,4]') +
@@ -559,7 +549,6 @@
 
   async function completeOutsideTurn(from) {
     if (completing || !from) return;
-    if (state.single) return;        // a single page per turn is already right
     if (!state.enabled || state.navigating || state.suspended) return;
     if (state.passThrough || state.jumpWorks === false) return;
     completing = true;
@@ -617,7 +606,7 @@
         '   row ' + (idx === undefined ? '?' : idx + 1) + ' / ' + state.rows.length,
       'settings:  enabled=' + state.enabled + '  offset=' + state.parity +
         (state.parity === 0 ? ' (cover alone)' : ' (pairs from page 1)') +
-        '  smooth=' + state.smooth + '  single=' + state.single +
+        '  smooth=' + state.smooth +
         '  dim=' + Math.round(DIM_LEVELS[state.dim] * 100) + '%' +
         (state.suspended ? '  SUSPENDED(' + state.suspendedBy + ')' : ''),
       'gamepad:   ' + (state.padName || 'none connected') +
@@ -851,9 +840,7 @@
     if (!state.enabled) return;
 
     // Zoomed into a panel? Stand aside until they zoom back out.
-    const standAside = readerZoomed() ? 'zoom'
-      : readerPanelZoom() ? 'panel zoom' : '';
-    if (standAside) { suspend(standAside); return; }
+    if (readerPanelZoom()) { suspend('panel zoom'); return; }
     if (state.suspended) {
       if (state.suspendedBy === 'manual') return;      // only resume what we started
       state.suspended = false;
@@ -1609,13 +1596,6 @@
     updateHud();
   }
 
-  function toggleSingle() {
-    state.single = !state.single;
-    store.set('single', state.single);
-    log('single page ' + (state.single ? 'ON - one page at a time' : 'OFF - back to spreads'));
-    apply();
-  }
-
   // Fullscreen, which matters when the whole desktop is being streamed rather
   // than a single cast tab: it takes the browser's own chrome off the TV, and
   // the extra height goes straight into the page size.
@@ -1655,7 +1635,6 @@
       '  drag       swipe left or right',
       '',
       '  F          full screen             ' + (document.fullscreenElement ? '[on]' : '[off]'),
-      '  Z          one page at a time      ' + (state.single ? '[on]' : '[off]'),
       '  B          dim the screen          [' + pct + ']',
       '  P          pairing offset          ' + (state.parity ? '[from page 1]' : '[cover alone]'),
       '  S          fade between pages      ' + (state.smooth ? '[on]' : '[off]'),
@@ -1665,7 +1644,7 @@
       '',
       '  controller',
       '    triggers, bumpers, d-pad, stick   spreads',
-      '    X  dim      Y  one page      Menu  this card',
+      '    X  dim      Menu  this card',
       '    View  full screen (needs the F key on some setups)',
     ].join('\n');
   }
@@ -1745,21 +1724,6 @@
     return Date.now() - collapsedSince >= COLLAPSE_SETTLE;
   }
 
-  // Kept as well: a scale on the transform would mean we are blocking a zoom
-  // outright rather than merely laying it out badly. Not observed on DCUI.
-  function readerZoomed() {
-    const host = q(SEL.host);
-    if (!host) return false;
-    for (const canvas of qa('canvas', host)) {
-      const t = canvas.style.transform || '';
-      const scale = /scale[XY]?\(\s*(-?[\d.]+)/.exec(t);
-      if (scale && Math.abs(parseFloat(scale[1]) - 1) > 0.01) return true;
-      const matrix = /matrix\(\s*(-?[\d.]+)/.exec(t);
-      if (matrix && Math.abs(parseFloat(matrix[1]) - 1) > 0.01) return true;
-    }
-    return false;
-  }
-
   // ----------------------------------------------------------------- gamepad
   //
   // Streaming a controller in (Moonlight/Sunshine, Steam Link) delivers a real
@@ -1797,7 +1761,6 @@
           state.padLast = 'button ' + i;
           if (i === PAD_FULL) toggleFullscreen(true);
           else if (i === PAD_DIM) cycleDim();
-          else if (i === PAD_SINGLE) toggleSingle();
           else if (i === PAD_HELP) toggleHelp();
           else padNavigate(PAD_NEXT.indexOf(i) >= 0 ? 1 : PAD_PREV.indexOf(i) >= 0 ? -1 : 0);
         } else if (!down) {
@@ -1908,7 +1871,7 @@
 
     // Our hotkeys are ours: keep them from reaching the reader, which may bind
     // the same letters to its own controls.
-    if ('dtpsbzhf'.indexOf(key) >= 0 && key.length === 1) {
+    if ('dtpsbhf'.indexOf(key) >= 0 && key.length === 1) {
       e.preventDefault();
       e.stopImmediatePropagation();
     }
@@ -1939,7 +1902,6 @@
 
     if (key === 'f') { toggleFullscreen(false); return; }
     if (key === 'b') { cycleDim(); return; }
-    if (key === 'z') { toggleSingle(); return; }
     if (key === 'h') { toggleHelp(); return; }
 
     if (key === 'p') {
@@ -2048,7 +2010,6 @@
     // relearn.
     state.jumpOffset = 0;
     state.dim = store.get('dim', 0);
-    state.single = store.get('single', false);
 
     // Bind the key handler FIRST, before anything else and before the reader
     // has loaded. Listeners on the same target fire in registration order, so
@@ -2163,9 +2124,7 @@
         resume: resume,
         help: toggleHelp,
         fullscreen: () => toggleFullscreen(false),
-        single: toggleSingle,
         dim: cycleDim,
-        zoomed: readerZoomed,
         collapsed: () => { const h = q(SEL.host); return !!h && slotsCollapsed(h); },
         verifyRestore: verifyRestore,
         snapshot: snapshot,

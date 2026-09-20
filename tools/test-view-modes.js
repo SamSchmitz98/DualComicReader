@@ -103,28 +103,7 @@ const settle = () => new Promise((r) => setTimeout(r, 40));
 (async () => {
   api.apply();
   await settle();
-  check('starts as a spread', state.single === false && state.last.showPair === true);
-
-  key('z');
-  await settle();
-  check('Z shows one page at a time', state.single === true && state.last.showPair === false);
-
-  // Whether that makes the page any BIGGER depends on the window. A page is
-  // fitted to the screen's height, so on anything widescreen two of them
-  // already fit and single-page mode changes the size not at all - it only
-  // lifts the half-the-viewport cap, which binds on a tall or narrow window.
-  global.innerWidth = 1200;                       // taller than 4:3, so the cap bites
-  api.apply();
-  await settle();
-  check('on a narrow window, one page uses the width two would have shared',
-    state.last.boxW > Math.floor(1200 / 2));
-  global.innerWidth = 2130;
-  api.apply();
-  await settle();
-
-  key('z');
-  await settle();
-  check('Z again returns to spreads', state.single === false && state.last.showPair === true);
+  check('starts as a spread', state.last.showPair === true);
 
   const before = rootStyle['--dcui2p-dim'];
   key('b');
@@ -134,8 +113,9 @@ const settle = () => new Promise((r) => setTimeout(r, 40));
 
   key('h');
   check('H shows the help card', helpShown() === true);
-  check('...listing the keys and the controller', /one page at a time/.test(
-    body.kids.find((n) => n.id === 'dcui2p-help').textContent) );
+  const card = body.kids.find((n) => n.id === 'dcui2p-help').textContent;
+  check('...listing the keys and the controller',
+    /dim the screen/.test(card) && /controller/.test(card) && /full screen/.test(card));
   key('h');
   check('H puts it away', helpShown() === false);
 
@@ -179,24 +159,12 @@ const settle = () => new Promise((r) => setTimeout(r, 40));
   check('leaving panel zoom resumes the spread',
     state.suspended === false && rootClasses.has('dcui2p-on'));
 
-  // Zoom: a scale on the canvas transform is the form we would actively break.
-  canvases[1].style.transform = 'translateX(0px) scale(2.4)';
-  api.apply();
-  await settle();
-  check('a zoomed reader suspends the layout', state.suspended === true && state.suspendedBy === 'zoom');
-  check('...and the reader is given its width back', !rootClasses.has('dcui2p-on'));
-
-  canvases[1].style.transform = 'translateX(0px)';
-  api.apply();
-  await settle();
-  check('zooming back out resumes the spread', state.suspended === false && rootClasses.has('dcui2p-on'));
-
   api.suspend();
   await settle();
   check('a manual suspend also stands aside', state.suspended === true && state.suspendedBy === 'manual');
   api.apply();
   await settle();
-  check('...and is NOT undone by the zoom check', state.suspended === true);
+  check('...and is NOT undone by the panel-zoom check', state.suspended === true);
   api.resume();
   await settle();
   check('resume() brings it back', state.suspended === false && rootClasses.has('dcui2p-on'));

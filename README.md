@@ -59,14 +59,13 @@ New versions are picked up automatically from this repository.
 | `T` | Toggle the script on and off. Off restores the reader's stock behavior exactly. |
 | `P` | Shift the pairing offset, for books whose numbering does not line up. Default keeps the cover alone; pressing `P` pairs from page 1 instead. |
 | `F` | Full screen. Worth it when streaming the whole desktop — it takes the browser's own chrome off the TV and the extra height goes into the page size. |
-| `Z` | Show one page at a time instead of a spread. |
 | `B` | Dim the screen — cycles 100 / 85 / 70 / 55%. |
 | `H` | Show a card listing every key and the controller mapping. |
 | `S` | Toggle the fade across page turns. On by default. |
 | `D` | Toggle the debug HUD. On a touch device, triple-tap the top-left corner instead. |
 | `←` `→` | Move one *spread* at a time (via the page-browser thumbnails — the only synthetic input the reader honors). |
 | Swipe / mouse drag | Also moves one spread. Swipe left for the next spread, right for the previous one. |
-| Controller | Triggers, shoulders, d-pad left/right, A/B and the left stick each move one spread. X dims, Y is single-page, Menu shows the help card, View tries full screen. |
+| Controller | Triggers, shoulders, d-pad left/right, A/B and the left stick each move one spread. X dims, Menu shows the help card, View tries full screen. |
 
 All settings are remembered per site, via the userscript manager's
 storage where available and `localStorage` otherwise.
@@ -151,8 +150,8 @@ so with the spread in place you would see two zoomed panels, one from each
 page. The script watches for that collapse, waits a moment in case it is just
 a page turn passing through, and then stands aside.
 
-`dcui2p.zoomed()` and `dcui2p.collapsed()` report what the script currently
-thinks, and `dcui2p.suspend()` / `dcui2p.resume()` drive it by hand.
+`dcui2p.collapsed()` reports what the script currently sees, and
+`dcui2p.suspend()` / `dcui2p.resume()` drive it by hand.
 
 ### Anything else that turns a page
 
@@ -310,9 +309,9 @@ If arrow keys are not turning pages, `dcui2p.probeNav()` is the place to start
 - `tools/test-churn.js` — the layout cannot run away: it does not react to
   its own DOM writes, and even a page mutating 250 times a second cannot
   drive it past its ceiling.
-- `tools/test-view-modes.js` — single-page mode, dimming, the help card, and
-  standing aside while the reader is zoomed (including that a manual suspend
-  is not undone by the zoom check).
+- `tools/test-view-modes.js` — dimming, full screen, the help card, and
+  standing aside for panel zoom (including that a manual suspend is not
+  undone by the automatic check).
 - `tools/test-outside-turn.js` — a page turn the script did not cause gets
   carried on to the spread boundary, in both directions, while a deliberate
   jump to a chosen page is obeyed exactly.
