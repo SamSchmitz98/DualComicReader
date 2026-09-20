@@ -61,6 +61,7 @@ New versions are picked up automatically from this repository.
 | `S` | Toggle the fade across page turns. On by default. |
 | `D` | Toggle the debug HUD. On a touch device, triple-tap the top-left corner instead. |
 | `←` `→` | Move one *spread* at a time (via the page-browser thumbnails — the only synthetic input the reader honors). |
+| Swipe / mouse drag | Also moves one spread. Swipe left for the next spread, right for the previous one. |
 
 All settings are remembered per site, via the userscript manager's
 storage where available and `localStorage` otherwise.
@@ -118,8 +119,15 @@ current one: when the current page leads its row the spread is
 change — the page it passes through trails the same row, so the screen does
 not alter until the destination lands.
 
-If you use the reader's own controls — click-to-advance, swipe, the page
-browser — you move one page at a time and the pairing follows you.
+A mouse drag or touch swipe also moves a whole spread. The reader handles
+that gesture itself and turns one page - half a move - and its drag handling
+can be neither driven nor cleanly suppressed from outside. So the script
+watches the same gesture, lets the reader do whatever it does, then completes
+the move to the row the swipe was asking for, measured from the page the
+swipe started on. That is correct whether the reader turned a page or not.
+
+The reader's on-screen buttons and its page browser still move one page at a
+time, and the pairing follows wherever they land.
 
 ### Smoothness
 
@@ -221,6 +229,10 @@ If arrow keys are not turning pages, `dcui2p.probeNav()` is the place to start
   the script's fallback constant and in the manifest. `node
   tools/check-version.js` verifies they agree; `node tools/check-version.js
   1.2.3` sets all three.
+- `tools/test-swipe.js` — drags and swipes: that one gesture moves one spread
+  whether the reader itself turns a page in response or not, and that clicks,
+  vertical drags, slow pans and drags on buttons or open modals are left
+  alone.
 - `tools/test-fresh-install.js` — simulates a brand-new install (empty
   storage, no userscript APIs), presses an arrow key and checks that the
   script takes it and jumps to the right page. It exists because the author's

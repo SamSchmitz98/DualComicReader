@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         DCUI Two-Page View
 // @namespace    https://github.com/SamSchmitz98/DualComicReader
-// @version      1.0.1
+// @version      1.1.0
 // @description  Shows two portrait pages side by side in the DC Universe Infinite web reader, like an open print comic. Layout only - no downloading, extracting or re-hosting of artwork.
 // @author       SamSchmitz98
 // @match        https://www.dcuniverseinfinite.com/comics/book/*
@@ -64,7 +64,7 @@
     pageCount: '.page-count',
   };
 
-  const VERSION = (typeof GM_info !== 'undefined' && GM_info.script && GM_info.script.version) || '1.0.1';
+  const VERSION = (typeof GM_info !== 'undefined' && GM_info.script && GM_info.script.version) || '1.1.0';
 
   const DEFAULT_ASPECT = 0.652;   // standard US comic page, used until the manifest loads
   const MIN_BOX = 260;            // below this a pair is unreadable; fall back to single page
@@ -74,6 +74,9 @@
   const FADE_MS = 80;             // fade out/in across a page turn; drives CSS and the wait
   const FADE_MAX_MS = 1800;       // never hold the screen faded out longer than this (a two-page jump takes ~1.3s)
   const SETTLE_QUIET = 620;       // ms of no page change that counts as "arrived"
+  const SWIPE_MIN_PX = 60;        // shorter than this is a click, not a swipe
+  const SWIPE_MAX_MS = 900;       // slower than this is a pan or a hesitation, not a swipe
+  const SWIPE_RATIO = 2;          // must be at least this much more horizontal than vertical
   const ARRIVAL_QUIET = 320;      // after the counter hits the target: time for the neighbour canvas to redraw
 
   // ---------------------------------------------------------------- state
@@ -559,8 +562,8 @@
     // to have recomputed its slide offsets for the new container width. This
     // costs the page-turn animation, which is a fair trade for never being
     // mispositioned.
-    'html.dcui2p-on ' + SEL.host + ' canvas.dcui2p-left  { transform: translateX(0) !important; }',
-    'html.dcui2p-on ' + SEL.host + ' canvas.dcui2p-right { transform: translateX(var(--dcui2p-w, 0px)) !important; }',
+    'html.dcui2p-on ' + SEL.host + ' canvas.dcui2p-left  { transform: translateX(0) !important; left: 0 !important; }',
+    'html.dcui2p-on ' + SEL.host + ' canvas.dcui2p-right { transform: translateX(var(--dcui2p-w, 0px)) !important; left: 0 !important; }',
     'html.dcui2p-on ' + SEL.host + ' canvas.dcui2p-off   { visibility: hidden !important; }',
     // A page turn is a content swap we cannot animate, so fade over it: the
     // pages appear to change together rather than one visibly following the
@@ -1287,6 +1290,76 @@
     return results;
   }
 
+  // ------------------------------------------------------------------ swipes
+  //
+  // A mouse drag or touch swipe is handled by the reader itself, which turns
+  // ONE page - half a move in a two-page layout, and from the left-hand page
+  // of a pair it looks like nothing happened at all.
+  //
+  // We do not fight the reader for the gesture. Its drag handling cannot be
+  // driven or reliably suppressed from outside, and swallowing its events
+  // would also swallow the clicks that reveal its controls. Instead we watch
+  // the same gesture, let the reader do whatever it does with it - turn a page
+  // or not - and then complete the move: jump to the row the swipe was asking
+  // for, measured from the page the swipe STARTED on. That is correct whether
+  // the reader turned one page or none.
+  let gesture = null;
+
+  function onPointerDown(e) {
+    gesture = null;
+    if (!e.isTrusted || e.isPrimary === false) return;
+    if (e.pointerType === 'mouse' && e.button !== 0) return;
+    if (!state.enabled || !onReaderPage()) return;
+    const t = e.target;
+    if (!t || !t.closest || !t.closest(SEL.outer)) return;
+    // Buttons, links and open modals (settings, the page browser) keep their
+    // own gestures - scrolling the thumbnail grid must not turn the page.
+    if (t.closest('button, a, input, select, textarea, .reader-modal')) return;
+    gesture = { x: e.clientX, y: e.clientY, at: Date.now(), page: currentPage(), id: e.pointerId };
+  }
+
+  function onPointerUp(e) {
+    const g = gesture;
+    gesture = null;
+    if (!g || !e.isTrusted || e.pointerId !== g.id) return;
+    const dx = e.clientX - g.x;
+    const dy = e.clientY - g.y;
+    const ms = Date.now() - g.at;
+    if (Math.abs(dx) < SWIPE_MIN_PX || Math.abs(dx) < SWIPE_RATIO * Math.abs(dy) || ms > SWIPE_MAX_MS) return;
+    // Swiping left pulls the next page in, as in the stock reader.
+    completeSwipe(dx < 0 ? 1 : -1, g.page, { dx: Math.round(dx), dy: Math.round(dy), ms: ms, type: e.pointerType });
+  }
+
+  function onPointerCancel() { gesture = null; }
+
+  async function completeSwipe(dir, startPage, info) {
+    if (!startPage || state.navigating || state.passThrough || state.jumpWorks === false) return;
+    const target = targetPage(startPage, dir);
+    if (!target || target === startPage) return;
+    if (!thumbFor(target - state.jumpOffset)) return;      // nothing to click yet
+
+    state.navigating = true;
+    state.navReason = 'swipe ' + (dir > 0 ? 'forward' : 'back') + ' to ' + target;
+    try {
+      if (state.smooth) setTurning(true);
+
+      // Let the reader finish its own reaction first. A jump issued while it
+      // is mid-turn gets that turn added on top and lands one page out - the
+      // same failure as the leaked keyup.
+      const own = await waitForPageChange(startPage, 650);
+      const rested = own ? await settledPage(900, 180) : startPage;
+      log('swipe: ' + info.type + ' dx=' + info.dx + ' dy=' + info.dy + ' ' + info.ms + 'ms -> ' +
+          (dir > 0 ? 'forward' : 'back') + '; reader ' +
+          (own ? 'turned ' + startPage + ' -> ' + rested : 'did not turn') + '; target ' + target);
+
+      await goToPage(target, 'swipe ' + (dir > 0 ? 'forward' : 'back'));
+    } finally {
+      state.navigating = false;
+      apply();
+      requestAnimationFrame(() => setTurning(false));
+    }
+  }
+
   // ---------------------------------------------------------------- hotkeys
 
   function toggleDebug() {
@@ -1479,6 +1552,9 @@
     }
     window.addEventListener('resize', schedule);
     window.addEventListener('pointerup', onCornerTap, true);
+    window.addEventListener('pointerdown', onPointerDown, true);
+    window.addEventListener('pointerup', onPointerUp, true);
+    window.addEventListener('pointercancel', onPointerCancel, true);
 
     // Everything below touches the DOM, which does not exist yet at
     // document-start.
