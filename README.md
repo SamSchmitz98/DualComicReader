@@ -58,11 +58,14 @@ New versions are picked up automatically from this repository.
 |---|---|
 | `T` | Toggle the script on and off. Off restores the reader's stock behavior exactly. |
 | `P` | Shift the pairing offset, for books whose numbering does not line up. Default keeps the cover alone; pressing `P` pairs from page 1 instead. |
+| `Z` | Show one page at a time instead of a spread. |
+| `B` | Dim the screen — cycles 100 / 85 / 70 / 55%. |
+| `H` | Show a card listing every key and the controller mapping. |
 | `S` | Toggle the fade across page turns. On by default. |
 | `D` | Toggle the debug HUD. On a touch device, triple-tap the top-left corner instead. |
 | `←` `→` | Move one *spread* at a time (via the page-browser thumbnails — the only synthetic input the reader honors). |
 | Swipe / mouse drag | Also moves one spread. Swipe left for the next spread, right for the previous one. |
-| Controller | Triggers, shoulders, d-pad left/right, A/B and the left stick each move one spread. |
+| Controller | Triggers, shoulders, d-pad left/right, A/B and the left stick each move one spread. X dims, Y is single-page, Menu shows the help card. |
 
 All settings are remembered per site, via the userscript manager's
 storage where available and `localStorage` otherwise.
@@ -131,6 +134,21 @@ swipe, rather than at the release. A canvas reader draws its reaction to a
 drag into the bitmap — pages sliding under the pointer — and no amount of CSS
 pinning holds that still, so covering the gesture is the only way to hide it.
 A drag that turns out not to be a swipe releases the fade on the spot.
+
+### Zooming
+
+When the reader is zoomed into a panel, a spread of two half-width pages is
+no use — so the script stands aside: it hands the reader back its full width,
+keeps every listener, and picks the layout up again when you zoom out. This
+matters more than presentation. Each canvas has its `transform` pinned with
+`!important`, so a reader that zooms by scaling that transform would have its
+zoom blocked outright rather than merely laid out badly.
+
+**The detection is a first guess and needs confirming.** It watches for a
+scale appearing on a canvas's transform, which is the form that would break.
+A reader that zooms by redrawing the canvas at a larger scale would not be
+noticed. `dcui2p.zoomed()` reports what the script currently thinks, and
+`dcui2p.suspend()` / `dcui2p.resume()` drive it by hand.
 
 ### Anything else that turns a page
 
@@ -278,6 +296,9 @@ If arrow keys are not turning pages, `dcui2p.probeNav()` is the place to start
   the script's fallback constant and in the manifest. `node
   tools/check-version.js` verifies they agree; `node tools/check-version.js
   1.2.3` sets all three.
+- `tools/test-view-modes.js` — single-page mode, dimming, the help card, and
+  standing aside while the reader is zoomed (including that a manual suspend
+  is not undone by the zoom check).
 - `tools/test-outside-turn.js` — a page turn the script did not cause gets
   carried on to the spread boundary, in both directions, while a deliberate
   jump to a chosen page is obeyed exactly.

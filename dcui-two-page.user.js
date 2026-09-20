@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         DCUI Two-Page View
 // @namespace    https://github.com/SamSchmitz98/DualComicReader
-// @version      1.2.0
+// @version      1.3.0
 // @description  Shows two portrait pages side by side in the DC Universe Infinite web reader, like an open print comic. Layout only - no downloading, extracting or re-hosting of artwork.
 // @author       SamSchmitz98
 // @match        https://www.dcuniverseinfinite.com/comics/book/*
@@ -64,7 +64,7 @@
     pageCount: '.page-count',
   };
 
-  const VERSION = (typeof GM_info !== 'undefined' && GM_info.script && GM_info.script.version) || '1.2.0';
+  const VERSION = (typeof GM_info !== 'undefined' && GM_info.script && GM_info.script.version) || '1.3.0';
 
   const DEFAULT_ASPECT = 0.652;   // standard US comic page, used until the manifest loads
   const MIN_BOX = 260;            // below this a pair is unreadable; fall back to single page
@@ -79,6 +79,11 @@
   // thumb works without configuring anything.
   const PAD_NEXT = [7, 5, 15, 0];  // RT, RB, d-pad right, A
   const PAD_PREV = [6, 4, 14, 1];  // LT, LB, d-pad left, B
+  const PAD_DIM = 2;               // X
+  const PAD_SINGLE = 3;            // Y
+  const PAD_HELP = 9;              // Menu / Start
+  const DIM_LEVELS = [1, 0.85, 0.7, 0.55];
+  const HELP_SECONDS = 14;         // the card puts itself away again
   const PAD_AXIS = 0.6;            // stick deflection that counts as a press
   const PAD_ANALOG = 0.5;          // trigger pull that counts as a press
 
@@ -108,6 +113,10 @@
     smooth: true,       // fade across page turns instead of watching them
     jumpWorks: null,    // can we navigate by clicking a page-browser thumbnail?
     jumpOffset: 0,      // measured gap between a thumbnail's alt text and where it lands
+    dim: 0,             // index into DIM_LEVELS
+    single: false,      // show one page at a time instead of a spread
+    suspended: false,   // stand aside without switching off - see suspend()
+    suspendedBy: '',
     gamepad: true,      // read controllers; set false from the console to stop
     padName: '',        // what is connected, for the HUD
     padLast: '',        // last control pressed, so a button can be identified
@@ -323,6 +332,8 @@
     if (!state.enabled) return { pair: false, why: 'script disabled' };
     if (page < 1) return { pair: false, why: 'no page number' };
 
+    if (state.single) return { pair: false, why: 'single-page mode (Z)' };
+
     const row = rowFor(page);
     if (!row) return { pair: false, why: 'page not in the row model yet' };
 
@@ -341,6 +352,11 @@
   // row. Stepping back from the right half of a pair aligns to its left page
   // first, which is what you want if you arrived mid-row.
   function targetPage(page, dir) {
+    // One page at a time when that is what is on screen.
+    if (state.single) {
+      const next = page + dir;
+      return next >= 1 && (!state.total || next <= state.total) ? next : page;
+    }
     ensureRows();
     const idx = state.rowOf[page];
     if (idx === undefined) {
@@ -428,6 +444,9 @@
       'next page  ' + (page + 1) + '   aspect ' + aspectOf(page + 1).toFixed(3) +
         (isSpread(page + 1) ? ' SPREAD' : ''),
       'pairing    ' + (L.showPair ? 'YES' : 'no') + '  (' + (L.why || '-') + ')',
+      'view       ' + (state.single ? 'ONE PAGE (Z)' : 'spread') +
+        '   dim ' + Math.round(DIM_LEVELS[state.dim] * 100) + '%' +
+        (state.suspended ? '   SUSPENDED (' + state.suspendedBy + ')' : ''),
       'offset     ' + state.parity + '  (' +
         (state.parity === 0 ? 'cover alone: [1] [2,3] [4,5]' : 'pairs from page 1: [1,2] [3,4]') +
         ')  press P to flip',
@@ -529,6 +548,7 @@
 
   async function completeOutsideTurn(from) {
     if (completing || !from) return;
+    if (state.single) return;        // a single page per turn is already right
     if (!state.enabled || state.navigating || state.passThrough || state.jumpWorks === false) return;
     completing = true;
 
@@ -585,7 +605,9 @@
         '   row ' + (idx === undefined ? '?' : idx + 1) + ' / ' + state.rows.length,
       'settings:  enabled=' + state.enabled + '  offset=' + state.parity +
         (state.parity === 0 ? ' (cover alone)' : ' (pairs from page 1)') +
-        '  smooth=' + state.smooth,
+        '  smooth=' + state.smooth + '  single=' + state.single +
+        '  dim=' + Math.round(DIM_LEVELS[state.dim] * 100) + '%' +
+        (state.suspended ? '  SUSPENDED(' + state.suspendedBy + ')' : ''),
       'gamepad:   ' + (state.padName || 'none connected') +
         (state.padLast ? '   last control: ' + state.padLast : ''),
       'nav:       hook=' + (state.passThrough ? 'none (reader has the keys)' : 'jump:thumbnail') +
@@ -625,6 +647,7 @@
 
   const CSS = [
     'html.dcui2p-on ' + SEL.host + ' {',
+    '  filter: brightness(var(--dcui2p-dim, 1));',
     '  left: var(--dcui2p-left, 0px) !important;',
     '  width: var(--dcui2p-w, 100vw) !important;',
     '  overflow: visible !important;',
@@ -654,6 +677,14 @@
     'html.dcui2p-debug ' + SEL.host + ' canvas.dcui2p-off   {',
     '  visibility: visible !important; opacity: 0.15 !important;',
     '  outline: 2px dashed #f44 !important; outline-offset: -2px;',
+    '}',
+    '#dcui2p-help {',
+    '  position: fixed; left: 50%; top: 50%; transform: translate(-50%, -50%);',
+    '  z-index: 2147483646; background: rgba(0,0,0,0.92); color: #fff;',
+    '  border: 1px solid rgba(255,255,255,0.35); border-radius: 10px;',
+    '  font: 15px/1.7 ui-monospace, Consolas, "Courier New", monospace;',
+    '  padding: 20px 26px; white-space: pre; pointer-events: none;',
+    '  box-shadow: 0 8px 40px rgba(0,0,0,0.8);',
     '}',
     '#dcui2p-hud {',
     '  position: fixed; top: 8px; left: 8px; z-index: 2147483647;',
@@ -767,6 +798,16 @@
     // would call teardown again - unbounded mutual recursion. Teardown is
     // driven by the T hotkey and by navigation, never by the observer.
     if (!state.enabled) return;
+
+    // Zoomed in on a panel? Stand aside until they zoom back out.
+    if (readerZoomed()) { suspend('zoom'); return; }
+    if (state.suspended) {
+      if (state.suspendedBy !== 'zoom') return;
+      state.suspended = false;
+      state.suspendedBy = '';
+      log('resumed: the reader is no longer zoomed');
+    }
+
     state.tornDown = false;
 
     // Capture the untouched reader on the very first apply, before this
@@ -820,6 +861,7 @@
       root.classList.add('dcui2p-on');
       root.classList.toggle('dcui2p-debug', state.debug);
       root.classList.toggle('dcui2p-smooth', state.smooth);
+      applyDim();
       root.style.setProperty('--dcui2p-w', boxW + 'px');
       root.style.setProperty('--dcui2p-left', left + 'px');
       backdrop(true);
@@ -928,7 +970,9 @@
       root.classList.remove('dcui2p-on', 'dcui2p-debug', 'dcui2p-smooth', 'dcui2p-turning');
       root.style.removeProperty('--dcui2p-w');
       root.style.removeProperty('--dcui2p-left');
+      root.style.removeProperty('--dcui2p-dim');
       backdrop(false);
+      toggleHelp(false);
       for (const canvas of qa('canvas', q(SEL.host) || document)) {
         canvas.classList.remove('dcui2p-left', 'dcui2p-right', 'dcui2p-off');
       }
@@ -1483,6 +1527,111 @@
     }
   }
 
+  // --------------------------------------------------------------- view modes
+
+  function applyDim() {
+    document.documentElement.style.setProperty('--dcui2p-dim', DIM_LEVELS[state.dim]);
+  }
+
+  function cycleDim() {
+    state.dim = (state.dim + 1) % DIM_LEVELS.length;
+    store.set('dim', state.dim);
+    applyDim();
+    log('dim: ' + Math.round(DIM_LEVELS[state.dim] * 100) + '%');
+    updateHud();
+  }
+
+  function toggleSingle() {
+    state.single = !state.single;
+    store.set('single', state.single);
+    log('single page ' + (state.single ? 'ON - one page at a time' : 'OFF - back to spreads'));
+    apply();
+  }
+
+  function helpText() {
+    const pct = Math.round(DIM_LEVELS[state.dim] * 100) + '%';
+    return [
+      'DCUI Two-Page View  v' + VERSION,
+      '',
+      '  \u2190  \u2192      previous / next spread',
+      '  drag       swipe left or right',
+      '',
+      '  Z          one page at a time      ' + (state.single ? '[on]' : '[off]'),
+      '  B          dim the screen          [' + pct + ']',
+      '  P          pairing offset          ' + (state.parity ? '[from page 1]' : '[cover alone]'),
+      '  S          fade between pages      ' + (state.smooth ? '[on]' : '[off]'),
+      '  T          turn the script off',
+      '  H          this card',
+      '  D          debug overlay',
+      '',
+      '  controller',
+      '    triggers, bumpers, d-pad, stick   spreads',
+      '    X  dim      Y  one page      Menu  this card',
+    ].join('\n');
+  }
+
+  let helpTimer = 0;
+
+  function toggleHelp(force) {
+    const want = force === undefined ? !q('#dcui2p-help') : !!force;
+    clearTimeout(helpTimer);
+    let el = q('#dcui2p-help');
+    if (!want) {
+      if (el) el.remove();
+      return;
+    }
+    if (!el) {
+      el = document.createElement('div');
+      el.id = 'dcui2p-help';
+      document.body.appendChild(el);
+    }
+    el.textContent = helpText();
+    // It is a reminder, not a panel - it should not sit on the comic.
+    helpTimer = setTimeout(() => toggleHelp(false), HELP_SECONDS * 1000);
+  }
+
+  // Stand aside without switching off: restore the reader to its own full
+  // width, keep every listener, and pick the layout back up on resume. Zoom
+  // needs this - a spread of two half-width pages is no use once someone is
+  // reading one panel, and our pinned transforms would fight a reader that
+  // zooms by scaling them.
+  function suspend(why) {
+    if (state.suspended) return;
+    state.suspended = true;
+    state.suspendedBy = why;
+    log('suspended (' + why + ') - the reader has its full width back');
+    teardown();
+    updateHud();
+  }
+
+  function resume() {
+    if (!state.suspended) return;
+    log('resumed after ' + state.suspendedBy);
+    state.suspended = false;
+    state.suspendedBy = '';
+    apply();
+  }
+
+  // Is the reader zoomed into a panel?
+  //
+  // UNCONFIRMED. The reader's zoom mechanism has not been observed, so this
+  // watches for the one form we would actively break: a scale on the canvas's
+  // own transform, which our !important rule overrides. A reader that zooms by
+  // redrawing the canvas at a larger scale would not show up here and needs a
+  // different signal - see FINDINGS.md.
+  function readerZoomed() {
+    const host = q(SEL.host);
+    if (!host) return false;
+    for (const canvas of qa('canvas', host)) {
+      const t = canvas.style.transform || '';
+      const scale = /scale[XY]?\(\s*(-?[\d.]+)/.exec(t);
+      if (scale && Math.abs(parseFloat(scale[1]) - 1) > 0.01) return true;
+      const matrix = /matrix\(\s*(-?[\d.]+)/.exec(t);
+      if (matrix && Math.abs(parseFloat(matrix[1]) - 1) > 0.01) return true;
+    }
+    return false;
+  }
+
   // ----------------------------------------------------------------- gamepad
   //
   // Streaming a controller in (Moonlight/Sunshine, Steam Link) delivers a real
@@ -1518,7 +1667,10 @@
         if (down && !padHeld.has(id)) {
           padHeld.add(id);
           state.padLast = 'button ' + i;
-          padNavigate(PAD_NEXT.indexOf(i) >= 0 ? 1 : PAD_PREV.indexOf(i) >= 0 ? -1 : 0);
+          if (i === PAD_DIM) cycleDim();
+          else if (i === PAD_SINGLE) toggleSingle();
+          else if (i === PAD_HELP) toggleHelp();
+          else padNavigate(PAD_NEXT.indexOf(i) >= 0 ? 1 : PAD_PREV.indexOf(i) >= 0 ? -1 : 0);
         } else if (!down) {
           padHeld.delete(id);          // must be released before it fires again
         }
@@ -1626,7 +1778,7 @@
 
     // Our hotkeys are ours: keep them from reaching the reader, which may bind
     // the same letters to its own controls.
-    if (key === 'd' || key === 't' || key === 'p' || key === 's') {
+    if ('dtpsbzh'.indexOf(key) >= 0 && key.length === 1) {
       e.preventDefault();
       e.stopImmediatePropagation();
     }
@@ -1654,6 +1806,10 @@
       apply();
       return;
     }
+
+    if (key === 'b') { cycleDim(); return; }
+    if (key === 'z') { toggleSingle(); return; }
+    if (key === 'h') { toggleHelp(); return; }
 
     if (key === 'p') {
       state.parity = state.parity ? 0 : 1;
@@ -1751,6 +1907,8 @@
     // travel, so it is noise. A genuine offset costs one retried jump to
     // relearn.
     state.jumpOffset = 0;
+    state.dim = store.get('dim', 0);
+    state.single = store.get('single', false);
 
     // Bind the key handler FIRST, before anything else and before the reader
     // has loaded. Listeners on the same target fire in registration order, so
@@ -1861,6 +2019,12 @@
         spreads: spreadPages,
         rows: () => { ensureRows(); return state.rows; },
         rowFor: rowFor,
+        suspend: () => suspend('manual'),
+        resume: resume,
+        help: toggleHelp,
+        single: toggleSingle,
+        dim: cycleDim,
+        zoomed: readerZoomed,
         verifyRestore: verifyRestore,
         snapshot: snapshot,
         stats: () => state.stats,

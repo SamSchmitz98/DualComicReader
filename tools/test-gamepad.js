@@ -114,9 +114,25 @@ async function press(i, { value = 1, streamTurns = 0 } = {}) {
   await press(7, { value: 0.2 });
   check('a trigger barely touched (0.2) is not a press', page === 96 && clicked.length === 0);
 
+  // Buttons that are not bound to anything at all.
   page = 96;
+  await press(11);
+  check('an unbound button (right stick click) does nothing', page === 96 && clicked.length === 0);
+
+  // The view-mode buttons must not page, and must not leak into later checks.
+  const dimBefore = state.dim;
+  await press(2);
+  check('X dims instead of paging', state.dim !== dimBefore && page === 96 && clicked.length === 0);
+  while (state.dim !== 0) await press(2);
+
   await press(3);
-  check('an unmapped button (Y) does nothing', page === 96 && clicked.length === 0);
+  check('Y toggles single-page mode instead of paging', state.single === true && page === 96);
+  await press(3);
+  check('...and Y again puts it back', state.single === false);
+
+  await press(9);
+  check('Menu raises the help card instead of paging', page === 96 && clicked.length === 0);
+  await press(9);
 
   // Holding must not repeat: one press, one spread.
   page = 96;
