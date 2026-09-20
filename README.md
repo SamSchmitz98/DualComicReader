@@ -10,6 +10,13 @@ or re-host artwork, does not touch authentication or decryption, and adds no
 network requests of its own. See [FINDINGS.md](FINDINGS.md) for how the reader
 works and why this approach was chosen.
 
+> This is an unofficial, fan-made project. It is not affiliated with, endorsed
+> by, or supported by DC, Warner Bros. Discovery, or DC Universe Infinite, and
+> those names are used only to say what it works with. It requires your own
+> DC Universe Infinite subscription and gives access to nothing you have not
+> already paid for. Modifying how a site displays may be against that site's
+> terms of use; read them and use this at your own discretion.
+
 ## Install
 
 There are two ways in. They run the same file and behave identically; pick
