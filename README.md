@@ -11,11 +11,38 @@ works and why this approach was chosen.
 
 ## Install
 
-1. Install [Violentmonkey](https://violentmonkey.github.io/) or
+There are two ways in. They run the same file and behave identically; pick
+one. (Installing both is harmless — the script notices and runs once.)
+
+### As a standalone extension — nothing else to install
+
+1. Download this repository: **Code → Download ZIP** on GitHub, and unzip it
+   somewhere you will not delete. (Or `git clone` it.)
+2. Open `chrome://extensions` and switch on **Developer mode**, top right.
+3. Click **Load unpacked** and choose the unzipped folder — the one that
+   contains `manifest.json`.
+4. Open any issue in the DCUI web reader. The spread view applies itself.
+
+Works in Chrome 111 or newer, and in Edge and Brave. To update, replace the
+folder's contents with a newer download and press the reload arrow on the
+extension's card. Chrome may remind you at startup that a developer-mode
+extension is running; that is expected for any extension not installed from
+the Web Store.
+
+The extension asks for no permissions. It can run on
+`dcuniverseinfinite.com/comics/book/*` and nowhere else, and it makes no
+network requests.
+
+### As a userscript — updates itself
+
+1. Install [Violentmonkey](https://violentmonkey.github.io/) (open source) or
    [Tampermonkey](https://www.tampermonkey.net/) in Chrome.
-2. Open `dcui-two-page.user.js` in the extension's editor — or drag the file
-   onto the extension's dashboard — and save it.
+2. Open
+   [`dcui-two-page.user.js`](https://raw.githubusercontent.com/SamSchmitz98/DualComicReader/main/dcui-two-page.user.js)
+   — the manager will offer to install it.
 3. Open any issue in the DCUI web reader. The spread view applies itself.
+
+New versions are picked up automatically from this repository.
 
 ## Hotkeys
 
@@ -181,7 +208,17 @@ If arrow keys are not turning pages, `dcui2p.probeNav()` is the place to start
 
 ## Files
 
-- `dcui-two-page.user.js` — the userscript.
+- `dcui-two-page.user.js` — the script. One file, loaded either by a
+  userscript manager or as the extension's content script; it assumes no
+  `GM_*` API and falls back to plain-web equivalents (`localStorage`, the
+  async clipboard) when none is present.
+- `manifest.json` — makes this folder loadable as an unpacked Chrome
+  extension. It lives at the repository root so the extension runs the same
+  file rather than a copy.
+- `tools/check-version.js` — the version appears in the userscript header, in
+  the script's fallback constant and in the manifest. `node
+  tools/check-version.js` verifies they agree; `node tools/check-version.js
+  1.2.3` sets all three.
 - `FINDINGS.md` — how the reader renders pages, navigates, and exposes page
   metadata; the investigation behind the implementation.
 - `LICENSE` — MIT.

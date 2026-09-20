@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         DCUI Two-Page View
 // @namespace    https://github.com/SamSchmitz98/DualComicReader
-// @version      0.9.1
+// @version      0.9.2
 // @description  Shows two portrait pages side by side in the DC Universe Infinite web reader, like an open print comic. Layout only - no downloading, extracting or re-hosting of artwork.
 // @author       SamSchmitz98
 // @match        https://www.dcuniverseinfinite.com/comics/book/*
@@ -48,6 +48,15 @@
 (function () {
   'use strict';
 
+  // This one file is loaded two ways: by a userscript manager, or as the
+  // content script of the unpacked extension (manifest.json, MAIN world). No
+  // GM_* API is assumed anywhere - each use is guarded and falls back to a
+  // plain-web equivalent. If someone has both installed, run once: the flag
+  // lives on the page's real global, which both injection routes can see.
+  const pageGlobal = (typeof unsafeWindow !== 'undefined' && unsafeWindow) || window;
+  if (pageGlobal.__dcui2pLoaded) return;
+  pageGlobal.__dcui2pLoaded = true;
+
   const SEL = {
     host: '.dc-comic-reader',
     outer: '#issue-page-reader-container',
@@ -55,7 +64,7 @@
     pageCount: '.page-count',
   };
 
-  const VERSION = (typeof GM_info !== 'undefined' && GM_info.script && GM_info.script.version) || '0.9.1';
+  const VERSION = (typeof GM_info !== 'undefined' && GM_info.script && GM_info.script.version) || '0.9.2';
 
   const DEFAULT_ASPECT = 0.652;   // standard US comic page, used until the manifest loads
   const MIN_BOX = 260;            // below this a pair is unreadable; fall back to single page
@@ -518,6 +527,11 @@
       if (typeof GM_setClipboard === 'function') {
         GM_setClipboard(text);
         console.log('%c[dcui2p] report copied to the clipboard', 'color:#0a0;font-weight:bold');
+      } else if (navigator.clipboard && navigator.clipboard.writeText) {
+        // Extension route: no GM API. May be refused without page focus.
+        navigator.clipboard.writeText(text).then(
+          () => console.log('%c[dcui2p] report copied to the clipboard', 'color:#0a0;font-weight:bold'),
+          () => { /* not focused - the text is in the console above */ });
       }
     } catch (_) { /* clipboard is a convenience, not a requirement */ }
     return text;
