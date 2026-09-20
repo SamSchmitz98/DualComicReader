@@ -157,6 +157,28 @@ const settle = () => new Promise((r) => setTimeout(r, 40));
   api.apply();
   await settle();
 
+  // Panel zoom. Double-clicking a panel takes the reader out of carousel mode
+  // and it redraws the panel into EVERY canvas, so leaving our layout in place
+  // shows two zoomed panels, one from each page. We have to stand aside - but
+  // not so eagerly that a momentary collapse during a page turn flickers.
+  canvases.forEach((c) => { c.style.transform = 'translate(0px, 0px)'; });
+  api.apply();
+  await settle();
+  check('a momentary collapse does not suspend', state.suspended === false);
+
+  await new Promise((r) => setTimeout(r, 300));
+  api.apply();
+  await settle();
+  check('a sustained collapse stands aside for panel zoom',
+    state.suspended === true && state.suspendedBy === 'panel zoom');
+  check('...handing the reader back its full width', !rootClasses.has('dcui2p-on'));
+
+  canvases.forEach((c, i) => { c.style.transform = 'translate(' + ((i - 1) * 851) + 'px, 0px)'; });
+  api.apply();
+  await settle();
+  check('leaving panel zoom resumes the spread',
+    state.suspended === false && rootClasses.has('dcui2p-on'));
+
   // Zoom: a scale on the canvas transform is the form we would actively break.
   canvases[1].style.transform = 'translateX(0px) scale(2.4)';
   api.apply();

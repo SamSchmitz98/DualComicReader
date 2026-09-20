@@ -209,6 +209,14 @@ The stacking order survives this and has been constant since the first probe:
 **z-index 3 = current, 2 = next, 1 = previous.** It is the fallback when
 offsets collapse, and arguably the better primary signal.
 
+This turned out to be **panel zoom**: double-clicking a panel is what leaves
+the carousel, and the reader redraws the zoomed panel into *every* canvas.
+Forcing opacity back on - the fix for the blank screen above - therefore put
+two zoomed panels on screen at once, one from each page. There is no laying
+that out; the script has to stand aside and give the reader its full width
+back until the carousel returns. The collapse is the signal, debounced so a
+page turn passing through it does not flicker the layout.
+
 ### Identifying which canvas is which
 
 The widget stores its own slot bookkeeping directly on the canvas elements: two

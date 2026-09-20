@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "DCUI Two-Page View",
-  "version": "1.5.3",
+  "version": "1.6.0",
   "description": "Shows two portrait pages side by side in the DC Universe Infinite web reader, like an open print comic. Layout only - no downloading, extracting or re-hosting of artwork.",
   "homepage_url": "https://github.com/SamSchmitz98/DualComicReader",
   "minimum_chrome_version": "111",

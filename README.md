@@ -147,11 +147,14 @@ matters more than presentation. Each canvas has its `transform` pinned with
 `!important`, so a reader that zooms by scaling that transform would have its
 zoom blocked outright rather than merely laid out badly.
 
-**The detection is a first guess and needs confirming.** It watches for a
-scale appearing on a canvas's transform, which is the form that would break.
-A reader that zooms by redrawing the canvas at a larger scale would not be
-noticed. `dcui2p.zoomed()` reports what the script currently thinks, and
-`dcui2p.suspend()` / `dcui2p.resume()` drive it by hand.
+Double-clicking a panel is what triggers it. The reader leaves its carousel,
+parks every canvas at the same offset, and redraws the panel into each one —
+so with the spread in place you would see two zoomed panels, one from each
+page. The script watches for that collapse, waits a moment in case it is just
+a page turn passing through, and then stands aside.
+
+`dcui2p.zoomed()` and `dcui2p.collapsed()` report what the script currently
+thinks, and `dcui2p.suspend()` / `dcui2p.resume()` drive it by hand.
 
 ### Anything else that turns a page
 

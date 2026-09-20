@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         DCUI Two-Page View
 // @namespace    https://github.com/SamSchmitz98/DualComicReader
-// @version      1.5.3
+// @version      1.6.0
 // @description  Shows two portrait pages side by side in the DC Universe Infinite web reader, like an open print comic. Layout only - no downloading, extracting or re-hosting of artwork.
 // @author       SamSchmitz98
 // @match        https://www.dcuniverseinfinite.com/comics/book/*
@@ -64,7 +64,7 @@
     pageCount: '.page-count',
   };
 
-  const VERSION = (typeof GM_info !== 'undefined' && GM_info.script && GM_info.script.version) || '1.5.3';
+  const VERSION = (typeof GM_info !== 'undefined' && GM_info.script && GM_info.script.version) || '1.6.0';
 
   const DEFAULT_ASPECT = 0.652;   // standard US comic page, used until the manifest loads
   const MIN_BOX = 260;            // below this a pair is unreadable; fall back to single page
@@ -92,6 +92,7 @@
   const SWIPE_MIN_PX = 60;        // shorter than this is a click, not a swipe
   const SWIPE_MAX_MS = 900;       // slower than this is a pan or a hesitation, not a swipe
   const SWIPE_RATIO = 2;          // must be at least this much more horizontal than vertical
+  const COLLAPSE_SETTLE = 220;    // ms the carousel must stay collapsed before we stand aside
   const ARRIVAL_QUIET = 320;      // after the counter hits the target: time for the neighbour canvas to redraw
 
   // ---------------------------------------------------------------- state
@@ -558,7 +559,8 @@
   async function completeOutsideTurn(from) {
     if (completing || !from) return;
     if (state.single) return;        // a single page per turn is already right
-    if (!state.enabled || state.navigating || state.passThrough || state.jumpWorks === false) return;
+    if (!state.enabled || state.navigating || state.suspended) return;
+    if (state.passThrough || state.jumpWorks === false) return;
     completing = true;
 
     // Fade immediately: the reader animates its own turn, and on a canvas that
@@ -866,13 +868,15 @@
     // driven by the T hotkey and by navigation, never by the observer.
     if (!state.enabled) return;
 
-    // Zoomed in on a panel? Stand aside until they zoom back out.
-    if (readerZoomed()) { suspend('zoom'); return; }
+    // Zoomed into a panel? Stand aside until they zoom back out.
+    const standAside = readerZoomed() ? 'zoom'
+      : readerPanelZoom() ? 'panel zoom' : '';
+    if (standAside) { suspend(standAside); return; }
     if (state.suspended) {
-      if (state.suspendedBy !== 'zoom') return;
+      if (state.suspendedBy === 'manual') return;      // only resume what we started
       state.suspended = false;
       state.suspendedBy = '';
-      log('resumed: the reader is no longer zoomed');
+      log('resumed: the reader is back in its carousel');
     }
 
     state.tornDown = false;
@@ -1567,7 +1571,8 @@
   }
 
   async function completeSwipe(dir, startPage, info) {
-    if (!startPage || state.navigating || state.passThrough || state.jumpWorks === false) return;
+    if (!startPage || state.navigating || state.suspended) return;
+    if (state.passThrough || state.jumpWorks === false) return;
     const target = targetPage(startPage, dir);
     if (!target || target === startPage) return;
     if (!thumbFor(target - state.jumpOffset)) return;      // nothing to click yet
@@ -1717,11 +1722,39 @@
 
   // Is the reader zoomed into a panel?
   //
-  // UNCONFIRMED. The reader's zoom mechanism has not been observed, so this
-  // watches for the one form we would actively break: a scale on the canvas's
-  // own transform, which our !important rule overrides. A reader that zooms by
-  // redrawing the canvas at a larger scale would not show up here and needs a
-  // different signal - see FINDINGS.md.
+  // CONFIRMED by diffing the reader across a double-click: it leaves carousel
+  // mode, parking every canvas at translate(0,0) and hiding the ones it is not
+  // showing with opacity 0. It redraws the panel into each canvas, so with our
+  // layout in place - which forces opacity 1 on both slots - the viewer gets
+  // two zoomed panels, one from each page. Standing aside is the only sane
+  // answer, and it is why suspend() exists.
+  //
+  // Debounced: a momentary collapse during a page turn must not flicker the
+  // whole layout in and out.
+  let collapsedSince = 0;
+  let sawCarousel = false;
+
+  function readerPanelZoom() {
+    const host = q(SEL.host);
+    if (!host) return false;
+    if (!slotsCollapsed(host)) {
+      collapsedSince = 0;
+      sawCarousel = true;
+      return false;
+    }
+    // Never before the carousel has been seen working, or we would stand
+    // aside during startup and never lay anything out.
+    if (!sawCarousel) return false;
+    if (!collapsedSince) {
+      collapsedSince = Date.now();
+      setTimeout(schedule, COLLAPSE_SETTLE + 40);   // come back and decide
+      return false;
+    }
+    return Date.now() - collapsedSince >= COLLAPSE_SETTLE;
+  }
+
+  // Kept as well: a scale on the transform would mean we are blocking a zoom
+  // outright rather than merely laying it out badly. Not observed on DCUI.
   function readerZoomed() {
     const host = q(SEL.host);
     if (!host) return false;
@@ -1804,7 +1837,8 @@
 
   async function padNavigate(dir) {
     if (!dir || !state.enabled || !onReaderPage()) return;
-    if (state.navigating || state.passThrough || state.jumpWorks === false) return;
+    if (state.navigating || state.suspended) return;
+    if (state.passThrough || state.jumpWorks === false) return;
 
     const startPage = currentPage();
     const target = startPage ? targetPage(startPage, dir) : 0;
@@ -1928,7 +1962,7 @@
     if (e.key === 'ArrowRight' || e.key === 'ArrowLeft') {
       // Only take the key if we can actually move the reader ourselves;
       // otherwise the reader's one-page turn is the only navigation there is.
-      if (state.passThrough || state.jumpWorks === false) return;
+      if (state.passThrough || state.suspended || state.jumpWorks === false) return;
 
       const dir = e.key === 'ArrowRight' ? 1 : -1;
       const page = currentPage();
