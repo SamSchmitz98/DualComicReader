@@ -66,8 +66,7 @@ New versions are picked up automatically from this repository.
 All settings are remembered per site, via the userscript manager's
 storage where available and `localStorage` otherwise.
 
-The reader's own controls — the on-screen buttons, click-to-advance, swipe and
-the page browser — keep working untouched.
+The reader's own on-screen buttons and page browser keep working untouched.
 
 ## How it works
 
