@@ -132,6 +132,23 @@ drag into the bitmap — pages sliding under the pointer — and no amount of CS
 pinning holds that still, so covering the gesture is the only way to hide it.
 A drag that turns out not to be a swipe releases the fade on the spot.
 
+### Anything else that turns a page
+
+Arrow keys, swipes and gamepads are intercepted, but plenty of input cannot
+be — the reader's own on-screen buttons, its click-to-advance, and a
+controller streamed in through Moonlight or Steam Link, where something
+upstream turns a trigger into a keystroke or click that never looks like
+anything the script recognises. Each of those turns one page, which is half a
+move here.
+
+So rather than trying to identify every possible source, the script reacts to
+the result: when the page moves a single step and the script did not do it,
+it carries on to where a spread move from the starting page would have
+landed, with the same fade. One press of anything moves one spread.
+
+Deliberate jumps are left alone. Picking page 137 in the page browser goes to
+137 and stays there.
+
 ### Controllers
 
 A controller streamed to the machine — Moonlight/Sunshine, Steam Link — shows
@@ -254,6 +271,9 @@ If arrow keys are not turning pages, `dcui2p.probeNav()` is the place to start
   the script's fallback constant and in the manifest. `node
   tools/check-version.js` verifies they agree; `node tools/check-version.js
   1.2.3` sets all three.
+- `tools/test-outside-turn.js` — a page turn the script did not cause gets
+  carried on to the spread boundary, in both directions, while a deliberate
+  jump to a chosen page is obeyed exactly.
 - `tools/test-gamepad.js` — a streamed controller: a trigger press lands on
   the right spread whether or not the stream also turns a page by itself, a
   barely-touched analog trigger is not a press, and holding a button moves one

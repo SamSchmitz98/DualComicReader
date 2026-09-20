@@ -500,10 +500,71 @@
     state.history.push(entry);
     if (state.history.length > 60) state.history.shift();
 
+    if (!state.navigating) completeOutsideTurn(from);
+
     if (state.debug) {
       console.log('%c[dcui2p] page ' + (from || '-') + ' -> ' + page + '%c  via ' + entry.cause +
         '   row ' + entry.row + (entry.leads ? '' : '  <-- MID-ROW') + '   showing ' + entry.shows,
         'color:#0a0;font-weight:bold', 'color:inherit');
+    }
+  }
+
+  // Finish a page turn that something else started.
+  //
+  // Arrow keys, swipes and gamepads are all intercepted, but plenty of input
+  // cannot be: the reader's own on-screen buttons, click-to-advance, and - the
+  // case this was written for - a controller streamed in through Moonlight or
+  // Steam Link, where something upstream turns a trigger into a keystroke or
+  // click that never looks like anything we recognise. Chrome may not even see
+  // the pad.
+  //
+  // Whatever the input was, it turned ONE page, which is half a move here. So
+  // rather than trying to identify every possible source, react to the result:
+  // when the page moves a single step and we did not do it, carry on to where
+  // a spread move from the starting page would have landed.
+  //
+  // Only single steps. A deliberate jump - picking a page in the browser - is
+  // left exactly where it was asked to go.
+  let completing = false;
+
+  async function completeOutsideTurn(from) {
+    if (completing || !from) return;
+    if (!state.enabled || state.navigating || state.passThrough || state.jumpWorks === false) return;
+    completing = true;
+
+    // Fade immediately: the reader animates its own turn, and on a canvas that
+    // animation is drawn into the bitmap where CSS cannot hold it still.
+    if (state.smooth) setTurning(true);
+    let handed = false;
+
+    try {
+      // Let the reader finish. Deciding now would risk reading a page it is
+      // only passing through.
+      const settled = await settledPage(1400, 220);
+      if (state.navigating) return;
+      if (Math.abs(settled - from) !== 1) return;     // a jump, not a page turn
+
+      ensureRows();
+      const dir = settled > from ? 1 : -1;
+      const target = targetPage(from, dir);
+      if (!target || target === settled) return;      // already where a spread move lands
+      if (!thumbFor(target - state.jumpOffset)) return;
+
+      state.navigating = true;
+      handed = true;
+      state.navReason = 'completing an outside turn to ' + target;
+      try {
+        log('outside: something turned ' + from + ' -> ' + settled +
+            '; completing the spread to ' + target);
+        await goToPage(target, 'complete');
+      } finally {
+        state.navigating = false;
+        apply();
+        requestAnimationFrame(() => setTurning(false));
+      }
+    } finally {
+      completing = false;
+      if (!handed) setTurning(false);                 // nothing to do - give the screen back
     }
   }
 
