@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         DCUI Two-Page View
 // @namespace    https://github.com/SamSchmitz98/DualComicReader
-// @version      0.7.0
+// @version      0.7.1
 // @description  Shows two portrait pages side by side in the DC Universe Infinite web reader, like an open print comic. Layout only - no downloading, extracting or re-hosting of artwork.
 // @author       SamSchmitz98
 // @match        https://www.dcuniverseinfinite.com/comics/book/*
@@ -55,14 +55,16 @@
     pageCount: '.page-count',
   };
 
-  const VERSION = (typeof GM_info !== 'undefined' && GM_info.script && GM_info.script.version) || '0.7.0';
+  const VERSION = (typeof GM_info !== 'undefined' && GM_info.script && GM_info.script.version) || '0.7.1';
 
   const DEFAULT_ASPECT = 0.652;   // standard US comic page, used until the manifest loads
   const MIN_BOX = 260;            // below this a pair is unreadable; fall back to single page
   const NAV_TIMEOUT = 1600;       // ms to wait for the reader to actually turn a page
-  const PROBE_TIMEOUT = 1200;     // ms per strategy when probing for a working nav hook
+  const PROBE_TIMEOUT = 700;      // ms per strategy when probing for a working nav hook
   const JUMP_TIMEOUT = 2600;      // ms to reach the target page after a thumbnail click
   const FADE_MS = 80;             // fade out/in across a page turn; drives CSS and the wait
+  const FADE_MAX_MS = 900;        // never hold the screen faded out longer than this
+  const SETTLE_QUIET = 620;       // ms of no page change that counts as "arrived"
 
   // ---------------------------------------------------------------- state
 
@@ -87,6 +89,7 @@
     jumpOffset: 0,      // measured gap between a thumbnail's alt text and where it lands
     history: [],        // every page change, recorded whether or not debug is on
     navReason: '',      // what the script is currently doing, to attribute changes
+    passThrough: false, // give up intercepting arrows; let the reader have them
     manifestDecoded: 0, // thumbnails that have decoded (and so have real dimensions)
     manifestExpected: 0,
     stats: { applies: 0, mutations: 0, resizes: 0, canvases: 0, rate: '0/s 0/s', since: Date.now() },
@@ -397,7 +400,7 @@
       'manifest   ' + state.manifestDecoded + '/' + (state.manifestExpected || '?') + ' decoded, ' +
         spreadPages().length + ' spreads' +
         (state.manifestDecoded < state.manifestExpected ? '  (still loading)' : ''),
-      'nav hook   ' + (state.navStrategy || 'not yet determined') +
+      'nav hook   ' + (state.passThrough ? 'NONE - keys passed to reader' : (state.navStrategy || 'not yet determined')) +
         '   jump ' + (state.jumpWorks === null ? 'untested' : state.jumpWorks ? 'YES' : 'no') +
         (state.jumpOffset ? '(' + (state.jumpOffset > 0 ? '+' : '') + state.jumpOffset + ')' : '') +
         '   fade ' + (state.smooth ? 'on' : 'off'),
@@ -479,7 +482,7 @@
         (state.parity === 0 ? ' (cover alone)' : ' (pairs from page 1)') +
         '  smooth=' + state.smooth,
       'nav:       hook=' + state.navStrategy + '  jumpWorks=' + state.jumpWorks +
-        '  jumpOffset=' + state.jumpOffset,
+        '  jumpOffset=' + state.jumpOffset + '  passThrough=' + state.passThrough,
       'manifest:  ' + state.manifestDecoded + '/' + state.manifestExpected +
         ' decoded, spreads at ' + (spreadPages().join(', ') || 'none'),
       'layout:    viewport ' + window.innerWidth + 'x' + window.innerHeight +
@@ -615,8 +618,20 @@
     return roles;
   }
 
+  let turnWatchdog = 0;
   function setTurning(on) {
-    document.documentElement.classList.toggle('dcui2p-turning', !!on && state.smooth);
+    clearTimeout(turnWatchdog);
+    const want = !!on && state.smooth;
+    document.documentElement.classList.toggle('dcui2p-turning', want);
+    if (want) {
+      // Never leave the screen faded out. A navigation that stalls - or one
+      // that grinds through every fallback strategy - would otherwise show a
+      // blank reader for seconds at a time.
+      turnWatchdog = setTimeout(() => {
+        document.documentElement.classList.remove('dcui2p-turning');
+        log('fade: released by watchdog, navigation is taking too long');
+      }, FADE_MAX_MS);
+    }
   }
 
   let applying = false;
@@ -902,7 +917,7 @@
   // through the pages in between, so we would call a move finished while it
   // is still travelling, and whatever it did next would look like the reader
   // acting on its own. Settling is the only honest signal.
-  function settledPage(timeout = NAV_TIMEOUT, quiet = 260) {
+  function settledPage(timeout = NAV_TIMEOUT, quiet = SETTLE_QUIET) {
     return new Promise((resolve) => {
       const started = Date.now();
       let last = currentPage();
@@ -957,7 +972,22 @@
         // something else also turned a page - the reader reacting to the same
         // keypress, say - the caller needs to know the true position, or it
         // will dispatch again and overshoot.
-        const settled = await settledPage(NAV_TIMEOUT);
+        const settled = await settledPage(NAV_TIMEOUT + SETTLE_QUIET);
+
+        // Adopt a strategy only if it moved the way we asked. click:edge and
+        // touch:swipe can navigate backwards when asked to go forwards, and
+        // remembering one of those makes every later move wrong.
+        const moved = settled - before;
+        if ((dir > 0 && moved <= 0) || (dir < 0 && moved >= 0)) {
+          warn('nav: ' + strategy.name + ' moved the WRONG WAY (' + before + ' -> ' + settled +
+               ', asked to go ' + (dir > 0 ? 'forward' : 'back') + ') - not adopting it');
+          if (state.navStrategy === strategy.name) {
+            state.navStrategy = null;
+            store.set('navStrategy', null);
+          }
+          return settled;
+        }
+
         if (settled !== result.page) {
           log('nav: page ' + before + ' -> ' + result.page + ' -> settled at ' + settled +
               ' (more than one turn happened)');
@@ -969,8 +999,14 @@
       log('nav: ' + strategy.name + ' did nothing');
     }
 
-    warn('no navigation hook worked - the reader ignored keys, clicks and swipes. ' +
-         'Run dcui2p.probeNav() in the console for detail.');
+    // Intercepting the arrow keys while having no way to navigate ourselves
+    // leaves the reader unable to turn a page at all, which is far worse than
+    // pairing being imperfect. Hand the keys back; the layout still works,
+    // you just move one page per press.
+    state.passThrough = true;
+    warn('no navigation hook worked - handing the arrow keys back to the reader. ' +
+         'Pages will turn one at a time. Run dcui2p.probeNav() for detail, then ' +
+         'dcui2p.state.passThrough = false to try again.');
     return 0;
   }
 
@@ -1011,7 +1047,7 @@
       const before = currentPage();
       el.dispatchEvent(makeEvent(MouseEvent, 'click',
         { bubbles: true, cancelable: true, composed: true, button: 0 }));
-      const settled = await settledPage(JUMP_TIMEOUT);
+      const settled = await settledPage(JUMP_TIMEOUT, SETTLE_QUIET + 200);
       const landed = settled === target ? { page: target } : null;
 
       if (!landed) {
@@ -1276,6 +1312,10 @@
     }
 
     if (e.key === 'ArrowRight' || e.key === 'ArrowLeft') {
+      // If we have no working way to navigate, do not swallow the key - the
+      // reader would have no way to turn the page either.
+      if (state.passThrough) return;
+
       // Stop the reader acting on this keypress; we re-issue our own so a
       // single press moves a whole pair.
       e.preventDefault();
