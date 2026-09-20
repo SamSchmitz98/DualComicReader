@@ -1,11 +1,11 @@
 // ==UserScript==
 // @name         DCUI Two-Page View
 // @namespace    https://github.com/SamSchmitz98/DualComicReader
-// @version      0.6.1
+// @version      0.7.0
 // @description  Shows two portrait pages side by side in the DC Universe Infinite web reader, like an open print comic. Layout only - no downloading, extracting or re-hosting of artwork.
 // @author       SamSchmitz98
 // @match        https://www.dcuniverseinfinite.com/comics/book/*
-// @run-at       document-idle
+// @run-at       document-start
 // @grant        GM_getValue
 // @grant        GM_setValue
 // @grant        unsafeWindow
@@ -55,7 +55,7 @@
     pageCount: '.page-count',
   };
 
-  const VERSION = (typeof GM_info !== 'undefined' && GM_info.script && GM_info.script.version) || '0.6.1';
+  const VERSION = (typeof GM_info !== 'undefined' && GM_info.script && GM_info.script.version) || '0.7.0';
 
   const DEFAULT_ASPECT = 0.652;   // standard US comic page, used until the manifest loads
   const MIN_BOX = 260;            // below this a pair is unreadable; fall back to single page
@@ -897,12 +897,21 @@
   // Wait for a specific page. Needed for jumps: the reader animates through
   // the pages in between, so watching for "the counter changed" reports a page
   // it merely passed through and makes a working jump look like a failure.
-  function waitForPage(target, timeout) {
+  // Wait until the page counter stops moving, and report where it came to
+  // rest. Watching for a particular page is not enough: the reader animates
+  // through the pages in between, so we would call a move finished while it
+  // is still travelling, and whatever it did next would look like the reader
+  // acting on its own. Settling is the only honest signal.
+  function settledPage(timeout = NAV_TIMEOUT, quiet = 260) {
     return new Promise((resolve) => {
       const started = Date.now();
+      let last = currentPage();
+      let stableSince = Date.now();
       const tick = () => {
-        if (currentPage() === target) return resolve({ page: target, ms: Date.now() - started });
-        if (Date.now() - started > timeout) return resolve(null);
+        const now = currentPage();
+        if (now && now !== last) { last = now; stableSince = Date.now(); }
+        if (Date.now() - stableSince >= quiet) return resolve(last);
+        if (Date.now() - started > timeout) return resolve(last);
         setTimeout(tick, 30);
       };
       setTimeout(tick, 30);
@@ -944,8 +953,18 @@
           store.set('navStrategy', strategy.name);
           log('nav: ' + strategy.name + ' WORKS - remembering it');
         }
-        log('nav: page ' + before + ' -> ' + result.page + ' in ' + result.ms + 'ms');
-        return result.page;
+        // Report where it came to REST, not the first page it moved to. If
+        // something else also turned a page - the reader reacting to the same
+        // keypress, say - the caller needs to know the true position, or it
+        // will dispatch again and overshoot.
+        const settled = await settledPage(NAV_TIMEOUT);
+        if (settled !== result.page) {
+          log('nav: page ' + before + ' -> ' + result.page + ' -> settled at ' + settled +
+              ' (more than one turn happened)');
+        } else {
+          log('nav: page ' + before + ' -> ' + settled + ' in ' + result.ms + 'ms');
+        }
+        return settled;
       }
       log('nav: ' + strategy.name + ' did nothing');
     }
@@ -992,10 +1011,11 @@
       const before = currentPage();
       el.dispatchEvent(makeEvent(MouseEvent, 'click',
         { bubbles: true, cancelable: true, composed: true, button: 0 }));
-      const landed = await waitForPage(target, JUMP_TIMEOUT);
+      const settled = await settledPage(JUMP_TIMEOUT);
+      const landed = settled === target ? { page: target } : null;
 
       if (!landed) {
-        const now = currentPage();
+        const now = settled;
         if (now !== before) {
           // It navigated, just not where we asked. Calibrate against the
           // thumbnail we actually clicked and let the caller correct this one.
@@ -1030,7 +1050,7 @@
           { key: 'Escape', code: 'Escape', keyCode: 27, which: 27, bubbles: true, cancelable: true }));
         log('jump: closed the page browser it opened');
       }
-      log('jump: reached page ' + target + ' in ' + landed.ms + 'ms');
+      log('jump: reached page ' + target);
       return target;
     }
 
@@ -1300,6 +1320,27 @@
     state.smooth = store.get('smooth', true);
     state.jumpWorks = store.get('jumpWorks', null);
     state.jumpOffset = store.get('jumpOffset', 0);
+
+    // Bind the key handler FIRST, before anything else and before the reader
+    // has loaded. Listeners on the same target fire in registration order, so
+    // a handler added at document-idle runs *after* the reader's own - it had
+    // already turned a page by the time stopImmediatePropagation ran, and
+    // every arrow press turned two pages. Registering at document-start is
+    // the only way to get in front of it.
+    window.addEventListener('keydown', onKeyDown, true);
+    document.addEventListener('keydown', onKeyDown, true);
+    window.addEventListener('resize', schedule);
+
+    // Everything below touches the DOM, which does not exist yet at
+    // document-start.
+    if (document.readyState === 'loading') {
+      document.addEventListener('DOMContentLoaded', start, { once: true });
+    } else {
+      start();
+    }
+  }
+
+  function start() {
     installStyles();
 
     // One unconditional line. Everything else is gated behind debug mode, so
@@ -1312,11 +1353,6 @@
       '  |  dcui2p.report() for a copyable diagnosis' +
       (state.debug ? '' : '  |  press D for the HUD and verbose logging'),
       'color:#0a0;font-weight:bold', 'color:inherit');
-
-    // Capture phase, so we get arrow keys before the reader's own handlers.
-    window.addEventListener('keydown', onKeyDown, true);
-    document.addEventListener('keydown', onKeyDown, true);
-    window.addEventListener('resize', schedule);
 
     // Keep the HUD honest even when nothing mutates.
     setInterval(() => { trackPage(); if (state.debug) updateHud(); }, 500);

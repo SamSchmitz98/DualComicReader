@@ -86,6 +86,16 @@ Partly established.
   hook ever stops working.
 - **A page turn takes about 475ms** from dispatch to the page counter
   updating. That is the reader's own transition, not our polling.
+- **The reader's own keydown listener wins the race unless you start early.**
+  Listeners on the same target fire in registration order, so a userscript
+  bound at `@run-at document-idle` runs *after* the reader's - which has
+  already turned a page by the time `stopImmediatePropagation()` executes.
+  Every arrow press therefore turned two pages: one by the reader, one by the
+  script. Visible in the history as an extra change, one page in the
+  direction of travel, attributed to "reader or user" in the same second as
+  the script's own move. `@run-at document-start` (binding the key handler
+  immediately and deferring everything DOM-dependent to `DOMContentLoaded`)
+  is the fix.
 - **The reader navigates on `keyup` as well as `keydown`.** Sending both, as
   a synthetic keypress naturally would, turns one dispatch into two page
   turns. Combined with a poller that sometimes caught the intermediate page
@@ -96,6 +106,13 @@ Partly established.
   `alt` text names.** Clicking `alt="Page 92"` lands on page 93. The cause was
   not chased down; the script measures the difference on the first jump and
   compensates from then on.
+- **Never treat "the counter reached the page I wanted" as arrival.** The
+  reader animates through the pages in between, so a move of two pages passes
+  through the destination's neighbour, and a jump passes through the
+  destination itself on its way somewhere else. Both make a move look finished
+  while it is still travelling, and whatever happens next is then misread as
+  the reader acting on its own. Wait for the counter to stop changing
+  (~260ms of quiet) and use where it came to rest.
 - A trap worth recording: in a sandboxing userscript engine, passing the
   script's own `window` as a UIEvent's `view` throws *"Failed to convert value
   to 'Window'"*, and every dispatch fails before reaching the page. Use
