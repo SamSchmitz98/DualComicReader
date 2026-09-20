@@ -25,7 +25,7 @@ works and why this approach was chosen.
 | `P` | Shift the pairing offset, for books whose numbering does not line up. Default keeps the cover alone; pressing `P` pairs from page 1 instead. |
 | `S` | Toggle the fade across page turns. On by default. |
 | `D` | Toggle the debug HUD. |
-| `←` `→` | Move one *pair* at a time instead of one page. |
+| `←` `→` | The reader's own page turn, one page per press. Two presses move a spread. |
 
 All settings are remembered per site, via the userscript manager's
 storage where available and `localStorage` otherwise.
@@ -69,9 +69,17 @@ after that is a lookup. In the test issue, whose page 3 is a spread, the
 layout comes out as `[1] [2] [3] [4,5] [6,7] …` — page 2 correctly goes solo
 because its partner is a spread.
 
-Arrow keys move to the first page of the next or previous row. Arriving
-mid-pair — opening an issue at page 104, say — nudges you onto the row
-boundary once, on load.
+Arrow keys are left to the reader, which turns one page per press, so two
+presses advance a spread. The display stays on the correct pair either way,
+because the carousel already holds the page that belongs beside the current
+one: when the current page leads its row the spread is `current + next`, and
+when it trails its row the spread is `previous + current`. Nothing has to be
+navigated to show the right two pages.
+
+This is not a stylistic choice. The reader ignores every synthetic keyboard,
+mouse and touch event, so a script cannot turn its pages — see
+[FINDINGS.md](FINDINGS.md). `dcui2p.probeNav()` re-tests this and will resume
+paired navigation automatically if a hook ever works.
 
 ### Smoothness
 
@@ -139,12 +147,12 @@ If arrow keys are not turning pages, `dcui2p.probeNav()` is the place to start
   deterministically with `!important` rather than trusting the widget to have
   recomputed its slide offsets for the narrowed container. Page turns are
   instant instead of sliding.
-- **Paired navigation drives the reader's own controls with synthetic events.**
-  Which control works is discovered at runtime: the script tries keyboard
-  events (at the focused element, `document`, `window` and the reader itself),
-  then an edge click, then a touch swipe, and remembers whichever turns the
-  page. If DCUI ever starts requiring a real user gesture, none will work — the
-  script says so in the console and the reader's own controls still function.
+- **One arrow press turns one page, not one spread.** The reader ignores
+  synthetic events, so the script cannot turn pages itself; it leaves the
+  arrow keys alone and pairs the display around wherever the reader lands.
+  Advancing a spread therefore takes two presses, and the first of them looks
+  like nothing happened — the same pair stays on screen, because the reader
+  has only moved from the left half of it to the right half.
 - **`@match` covers `/comics/book/*`, not only `/c/reader`.** The reader is a
   single-page app, so a script matched strictly on the reader URL would never
   load when you navigate into the reader from a book page. The script stays

@@ -86,6 +86,19 @@ Partly established.
   hook ever stops working.
 - **A page turn takes about 475ms** from dispatch to the page counter
   updating. That is the reader's own transition, not our polling.
+- **The reader cannot be navigated synthetically at all.** With the real
+  keypress correctly blocked, `probeNav()` — run from the console, so no real
+  key is involved — reported every strategy failing: keyboard events at the
+  focused element, at `document`, at `window` and at the reader element, an
+  edge click, and a touch swipe. Nothing moved the page.
+
+  This invalidates every earlier reading that said `key:focused` worked. Those
+  page turns were the *real* keypress reaching the reader while the script's
+  synthetic event did nothing; the script simply took the credit because the
+  page changed after it dispatched. **Any conclusion of the form "our
+  synthetic event worked" is worthless unless the real event was blocked at
+  the time.**
+
 - **The reader's own keydown listener wins the race unless you start early.**
   Listeners on the same target fire in registration order, so a userscript
   bound at `@run-at document-idle` runs *after* the reader's - which has
@@ -329,6 +342,23 @@ thumbnail reports real dimensions — and nothing that depends on the row model
 being final, such as aligning onto a row boundary, may run before then. (Earlier probes missed them only because those filtered for images
 wider than 200px and the thumbnails are 163px wide.) The script can read the
 whole manifest silently at startup — no UI flashing, no modal toggling.
+
+## Pairing is a display decision, not a navigation one
+
+Because the carousel always holds the previous, current and next page, the
+page that belongs beside the current one is *already drawn* whichever half of
+the row the reader is sitting on:
+
+| current page | left slot | right slot |
+|---|---|---|
+| leads its row (e.g. 96 of [96, 97]) | `cur` | `next` |
+| trails its row (e.g. 97 of [96, 97]) | `prev` | `cur` |
+
+So the correct spread can always be shown without moving the reader. This
+matters enormously given the finding above: the script does not need to
+navigate, and therefore does not need a synthetic navigation hook it cannot
+have. The arrow keys are left to the reader, which turns one page per press,
+and the display stays on the row. Two presses advance a spread.
 
 ## RECOMMENDATION — Approach B, geometry-driven, no pixel access
 

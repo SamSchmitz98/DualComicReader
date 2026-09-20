@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         DCUI Two-Page View
 // @namespace    https://github.com/SamSchmitz98/DualComicReader
-// @version      0.7.1
+// @version      0.8.0
 // @description  Shows two portrait pages side by side in the DC Universe Infinite web reader, like an open print comic. Layout only - no downloading, extracting or re-hosting of artwork.
 // @author       SamSchmitz98
 // @match        https://www.dcuniverseinfinite.com/comics/book/*
@@ -55,7 +55,7 @@
     pageCount: '.page-count',
   };
 
-  const VERSION = (typeof GM_info !== 'undefined' && GM_info.script && GM_info.script.version) || '0.7.1';
+  const VERSION = (typeof GM_info !== 'undefined' && GM_info.script && GM_info.script.version) || '0.8.0';
 
   const DEFAULT_ASPECT = 0.652;   // standard US comic page, used until the manifest loads
   const MIN_BOX = 260;            // below this a pair is unreadable; fall back to single page
@@ -89,7 +89,12 @@
     jumpOffset: 0,      // measured gap between a thumbnail's alt text and where it lands
     history: [],        // every page change, recorded whether or not debug is on
     navReason: '',      // what the script is currently doing, to attribute changes
-    passThrough: false, // give up intercepting arrows; let the reader have them
+    // Default ON: dcui2p.probeNav() showed this reader ignores every synthetic
+    // keyboard, mouse and touch event, so there is nothing to be gained by
+    // swallowing the arrow keys - the reader must handle them itself. Pairing
+    // no longer depends on navigation anyway; see pairDecision. probeNav()
+    // clears this if it ever finds a hook that works.
+    passThrough: true,
     manifestDecoded: 0, // thumbnails that have decoded (and so have real dimensions)
     manifestExpected: 0,
     stats: { applies: 0, mutations: 0, resizes: 0, canvases: 0, rate: '0/s 0/s', since: Date.now() },
@@ -283,21 +288,36 @@
 
   // True when `page` should be shown alongside page+1. Returns the reason too,
   // so the HUD can explain itself.
+  // Which two canvases make up the spread, and which goes on the left.
+  //
+  // The carousel always holds the previous, current and next page, so when the
+  // current page is the RIGHT half of its row we do not need to navigate
+  // anywhere - the page that belongs beside it is already drawn in the `prev`
+  // canvas. Pairing is therefore a display decision, not a navigation one,
+  // which matters because this reader cannot be navigated synthetically at
+  // all (see FINDINGS.md).
   function pairDecision(page) {
     if (!state.enabled) return { pair: false, why: 'script disabled' };
     if (page < 1) return { pair: false, why: 'no page number' };
 
     const row = rowFor(page);
     if (!row) return { pair: false, why: 'page not in the row model yet' };
-    if (row.length === 2 && row[0] === page) return { pair: true, why: 'paired' };
-    if (row.length === 2) return { pair: false, why: 'right half of the pair starting at ' + row[0] };
+
+    if (row.length === 2) {
+      return row[0] === page
+        ? { pair: true, left: 'cur', right: 'next', why: 'showing [' + row.join(', ') + ']' }
+        : { pair: true, left: 'prev', right: 'cur', why: 'showing [' + row.join(', ') + '] from the previous canvas' };
+    }
     if (isSpread(page)) return { pair: false, why: 'spread, full width' };
     if (state.total && page >= state.total) return { pair: false, why: 'last page' };
     if (page === 1) return { pair: false, why: 'cover stands alone' };
-    return { pair: false, why: 'alone (next page is a spread)' };
+    return { pair: false, why: 'alone (its neighbour is a spread)' };
   }
 
-  const pairsWithNext = (page) => pairDecision(page).pair;
+  const pairsWithNext = (page) => {
+    const d = pairDecision(page);
+    return d.pair && d.left === 'cur';
+  };
 
   // Where an arrow press should land: the first page of the next or previous
   // row. Stepping back from the right half of a pair aligns to its left page
@@ -372,10 +392,7 @@
 
     // What the viewer is actually looking at, which is the thing worth
     // sanity-checking at a glance.
-    let visible = 'page ' + (page || '?');
-    if (L.showPair) visible = 'pages ' + page + ' + ' + (page + 1) + '  (left | right)';
-    else if (page && isSpread(page)) visible = 'page ' + page + '  (SPREAD, full width)';
-    else if (page) visible = 'page ' + page + '  (single)';
+    const visible = page ? describeVisible(page) : 'nothing';
 
     hudElement().textContent = [
       'DCUI 2-PAGE  ' + (state.enabled ? 'ON' : 'OFF') + '   [T]oggle [P]arity [S]mooth [D]ebug',
@@ -426,10 +443,11 @@
   function describeVisible(page) {
     if (!page) return 'nothing';
     if (isSpread(page)) return 'page ' + page + ' (spread, full width)';
-    if (pairsWithNext(page)) return 'pages ' + page + ' + ' + (page + 1);
+    const d = pairDecision(page);
     const row = rowFor(page);
-    if (row && row.length === 2 && row[0] !== page) {
-      return 'page ' + page + ' alone (it is the RIGHT half of [' + row.join(', ') + '])';
+    if (d.pair && row) {
+      return 'pages ' + row[0] + ' + ' + row[1] +
+             (d.left === 'prev' ? ' (current page on the right)' : '');
     }
     return 'page ' + page + ' alone';
   }
@@ -526,9 +544,9 @@
     // to have recomputed its slide offsets for the new container width. This
     // costs the page-turn animation, which is a fair trade for never being
     // mispositioned.
-    'html.dcui2p-on ' + SEL.host + ' canvas.dcui2p-cur  { transform: translateX(0) !important; }',
-    'html.dcui2p-on ' + SEL.host + ' canvas.dcui2p-next { transform: translateX(var(--dcui2p-w, 0px)) !important; }',
-    'html.dcui2p-on ' + SEL.host + ' canvas.dcui2p-off  { visibility: hidden !important; }',
+    'html.dcui2p-on ' + SEL.host + ' canvas.dcui2p-left  { transform: translateX(0) !important; }',
+    'html.dcui2p-on ' + SEL.host + ' canvas.dcui2p-right { transform: translateX(var(--dcui2p-w, 0px)) !important; }',
+    'html.dcui2p-on ' + SEL.host + ' canvas.dcui2p-off   { visibility: hidden !important; }',
     // A page turn is a content swap we cannot animate, so fade over it: the
     // pages appear to change together rather than one visibly following the
     // other. The backdrop behind is already black, so this reads as a blink.
@@ -536,9 +554,9 @@
     'html.dcui2p-on.dcui2p-smooth.dcui2p-turning ' + SEL.host + ' { opacity: 0 !important; }',
     // Debug view: show the hidden canvases faintly and outline every slot, so
     // it is obvious which canvas the script thinks is which.
-    'html.dcui2p-debug ' + SEL.host + ' canvas.dcui2p-cur  { outline: 2px solid #0f0 !important; outline-offset: -2px; }',
-    'html.dcui2p-debug ' + SEL.host + ' canvas.dcui2p-next { outline: 2px solid #0ff !important; outline-offset: -2px; }',
-    'html.dcui2p-debug ' + SEL.host + ' canvas.dcui2p-off  {',
+    'html.dcui2p-debug ' + SEL.host + ' canvas.dcui2p-left  { outline: 2px solid #0f0 !important; outline-offset: -2px; }',
+    'html.dcui2p-debug ' + SEL.host + ' canvas.dcui2p-right { outline: 2px solid #0ff !important; outline-offset: -2px; }',
+    'html.dcui2p-debug ' + SEL.host + ' canvas.dcui2p-off   {',
     '  visibility: visible !important; opacity: 0.15 !important;',
     '  outline: 2px dashed #f44 !important; outline-offset: -2px;',
     '}',
@@ -686,7 +704,8 @@
     // The box the reader will fit the page into. Capped at half the viewport
     // when pairing so two of them always fit, and at the full viewport when a
     // spread or a lone page has the screen to itself.
-    let boxW = Math.round(Math.min(vh * aspectOf(page), decision.pair ? Math.floor(vw / 2) : vw));
+    const pageForAspect = decision.pair && decision.left === 'prev' ? page - 1 : page;
+    let boxW = Math.round(Math.min(vh * aspectOf(pageForAspect), decision.pair ? Math.floor(vw / 2) : vw));
     const showPair = decision.pair && boxW >= MIN_BOX;
     if (decision.pair && !showPair) boxW = Math.round(Math.min(vh * aspectOf(page), vw));
 
@@ -714,14 +733,22 @@
       root.style.setProperty('--dcui2p-left', left + 'px');
       backdrop(true);
 
+      // Map carousel roles (prev/cur/next) onto the two visible slots. Which
+      // role lands on the left depends on whether the current page leads its
+      // row or trails it - see pairDecision.
       const roles = classify(host);
+      const byRole = {};
+      for (const [el, role] of roles) if (!byRole[role]) byRole[role] = el;
+
+      const leftEl = showPair ? byRole[decision.left] : byRole.cur;
+      const rightEl = showPair ? byRole[decision.right] : null;
+
       for (const canvas of qa('canvas', host)) {
-        const role = roles.get(canvas) || 'prev';
-        canvas.classList.toggle('dcui2p-cur', role === 'cur');
-        canvas.classList.toggle('dcui2p-next', role === 'next' && showPair);
-        // The previous page would otherwise hang off the left edge of the
-        // centred container and be partly on screen.
-        canvas.classList.toggle('dcui2p-off', role === 'prev' || (role === 'next' && !showPair));
+        canvas.classList.toggle('dcui2p-left', canvas === leftEl);
+        canvas.classList.toggle('dcui2p-right', canvas === rightEl);
+        // Anything not in a slot is parked off-screen by the carousel and
+        // would otherwise poke out beside the centred container.
+        canvas.classList.toggle('dcui2p-off', canvas !== leftEl && canvas !== rightEl);
       }
     } finally {
       applying = false;
@@ -782,7 +809,7 @@
     if (q('#dcui2p-backdrop')) diffs.push('our backdrop is still in the DOM');
 
     const canvases = qa('canvas', host);
-    const tagged = canvases.filter((c) => /dcui2p/.test(c.className));
+    const tagged = canvases.filter((c) => /dcui2p/.test(c.className));   // left/right/off
     if (tagged.length) diffs.push(tagged.length + ' canvas(es) still carry our classes');
     const styled = canvases.filter((c) => c.style.transform && /!important/.test(c.getAttribute('style') || ''));
     if (styled.length) diffs.push(styled.length + ' canvas(es) still have forced transforms');
@@ -812,7 +839,7 @@
       root.style.removeProperty('--dcui2p-left');
       backdrop(false);
       for (const canvas of qa('canvas', q(SEL.host) || document)) {
-        canvas.classList.remove('dcui2p-cur', 'dcui2p-next', 'dcui2p-off');
+        canvas.classList.remove('dcui2p-left', 'dcui2p-right', 'dcui2p-off');
       }
     } finally {
       applying = false;
@@ -1169,6 +1196,11 @@
   async function maybeAlign() {
     if (state.aligned || !state.enabled || state.navigating) return;
 
+    // Nothing to align: with no way to navigate we cannot move the reader,
+    // and we no longer need to - a page that trails its row is displayed
+    // beside the previous canvas rather than navigated away from.
+    if (state.passThrough) { state.aligned = true; return; }
+
     // Do not align on a provisional row model. Until the thumbnails have
     // decoded, every page looks portrait, so a spread earlier in the issue is
     // missing and the row leaders after it are wrong - and alignment only ever
@@ -1223,15 +1255,35 @@
       await sleep(150);
     }
 
+    // The thumbnail jump is not a direction-based strategy, so it needs its
+    // own test - and it was never covered by this probe before.
+    const from = currentPage();
+    const jumpTarget = (state.total && from + 2 <= state.total) ? from + 2 : from - 2;
+    if (jumpTarget >= 1) {
+      state.jumpWorks = null;
+      let landed = 0;
+      try { landed = await jumpToPage(jumpTarget); } catch (e) { /* reported below */ }
+      const now = currentPage();
+      results.push({ strategy: 'jump:thumbnail', worked: now !== from,
+                     moved: now === from ? '-' : from + ' -> ' + now, ms: '-',
+                     error: now !== from && landed !== jumpTarget ? 'moved, but not to ' + jumpTarget : '' });
+      if (now !== from) { try { await jumpToPage(from); } catch (_) {} }
+    }
+
     console.table(results);
     const winner = results.find((r) => r.worked);
     if (winner) {
+      state.passThrough = false;
+      console.log('%c[dcui2p] a hook works - resuming paired navigation', 'color:#0a0;font-weight:bold');
+    } else {
+      state.passThrough = true;
+      console.log('%c[dcui2p] nothing works - the arrow keys stay with the reader, ' +
+                  'one page per press. Pairing still works.', 'color:#0a0;font-weight:bold');
+    }
+    if (winner && winner.strategy !== 'jump:thumbnail') {
       state.navStrategy = winner.strategy;
       store.set('navStrategy', winner.strategy);
       console.log('%c[dcui2p] using ' + winner.strategy, 'color:#0a0;font-weight:bold');
-    } else {
-      console.warn('[dcui2p] nothing moved the page. Try turning a page by hand and watch ' +
-                   'which DOM attributes change, or check whether the reader needs a real user gesture.');
     }
     if (currentPage() !== startPage) console.warn('[dcui2p] ended on page ' + currentPage() + ', started on ' + startPage);
     return results;
