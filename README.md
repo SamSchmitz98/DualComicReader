@@ -91,9 +91,7 @@ So the script reads the manifest to learn each page's aspect ratio, sets the
 container to exactly the width the art wants to be (`viewportHeight ×
 pageAspect`), and lets the reader redraw. The art then fills its canvas edge to
 edge, and the neighbouring canvas lands flush against it. The script centers
-the pair, hides the third canvas, and hides the scrollbar the site keeps at
-the right edge of the screen — which is only a restyle, and comes back with
-the rest on `T`. That is the whole trick — no cropping, no
+the pair and hides the third canvas. That is the whole trick — no cropping, no
 scaling hacks, and nothing reading pixels back off a canvas.
 
 ### Pairing
@@ -309,6 +307,9 @@ If arrow keys are not turning pages, `dcui2p.probeNav()` is the place to start
   the script's fallback constant and in the manifest. `node
   tools/check-version.js` verifies they agree; `node tools/check-version.js
   1.2.3` sets all three.
+- `tools/test-churn.js` — the layout cannot run away: it does not react to
+  its own DOM writes, and even a page mutating 250 times a second cannot
+  drive it past its ceiling.
 - `tools/test-view-modes.js` — single-page mode, dimming, the help card, and
   standing aside while the reader is zoomed (including that a manual suspend
   is not undone by the zoom check).

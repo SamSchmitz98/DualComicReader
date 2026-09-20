@@ -51,7 +51,7 @@ Object.defineProperty(global, 'navigator', { value: {}, configurable: true });
 const disk = { 'dcui2p:jumpWorks': 'true' };
 global.localStorage = { getItem: (k) => (k in disk ? disk[k] : null), setItem: (k, v) => { disk[k] = v; } };
 global.requestAnimationFrame = (f) => setTimeout(f, 0);
-global.MutationObserver = class { observe() {} };
+global.MutationObserver = class { observe() {} takeRecords() { return []; } };
 global.MouseEvent = class { constructor(type, init) { this.type = type; Object.assign(this, init); } };
 global.KeyboardEvent = global.MouseEvent;
 

@@ -167,6 +167,26 @@ Partly established.
   not rendered by Vue. Reader state must be found elsewhere (Nuxt payload,
   a Pinia store, or a global) if we need it at all.
 
+### A MutationObserver cannot be guarded with a flag
+
+The obvious way to stop a layout reacting to its own DOM writes is to set a
+flag during them and have the observer ignore anything that arrives while it
+is set. It does not work. Observer callbacks are delivered **asynchronously**,
+so the flag is false again by the time one runs, and every layout schedules
+the next — 60 a second, indefinitely.
+
+`observer.takeRecords()` after the writes is the real answer: it drains the
+records they produced so nothing is delivered for them. A ceiling on how often
+a layout may run (50ms apart) is worth having as well, since it bounds the
+cost of any feedback loop that has not been thought of.
+
+What tipped it over in practice was adding a class to elements the site's own
+framework manages, to hide a scrollbar. Vue rewrote the class, the script put
+it back, and the two fought at frame rate. The lesson generalises: **do not
+write to attributes on elements the site owns.** Everything else the script
+does is a stylesheet rule keyed on a class it puts on `<html>`, which nothing
+contests.
+
 ### Measure against `clientWidth`, not `innerWidth`
 
 The site lays its reader out inside `document.documentElement.clientWidth`,

@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         DCUI Two-Page View
 // @namespace    https://github.com/SamSchmitz98/DualComicReader
-// @version      1.6.0
+// @version      1.6.1
 // @description  Shows two portrait pages side by side in the DC Universe Infinite web reader, like an open print comic. Layout only - no downloading, extracting or re-hosting of artwork.
 // @author       SamSchmitz98
 // @match        https://www.dcuniverseinfinite.com/comics/book/*
@@ -64,7 +64,7 @@
     pageCount: '.page-count',
   };
 
-  const VERSION = (typeof GM_info !== 'undefined' && GM_info.script && GM_info.script.version) || '1.6.0';
+  const VERSION = (typeof GM_info !== 'undefined' && GM_info.script && GM_info.script.version) || '1.6.1';
 
   const DEFAULT_ASPECT = 0.652;   // standard US comic page, used until the manifest loads
   const MIN_BOX = 260;            // below this a pair is unreadable; fall back to single page
@@ -92,6 +92,7 @@
   const SWIPE_MIN_PX = 60;        // shorter than this is a click, not a swipe
   const SWIPE_MAX_MS = 900;       // slower than this is a pan or a hesitation, not a swipe
   const SWIPE_RATIO = 2;          // must be at least this much more horizontal than vertical
+  const MIN_APPLY_GAP = 50;       // ms between layouts, so nothing can spin at frame rate
   const COLLAPSE_SETTLE = 220;    // ms the carousel must stay collapsed before we stand aside
   const ARRIVAL_QUIET = 320;      // after the counter hits the target: time for the neighbour canvas to redraw
 
@@ -700,12 +701,6 @@
     // case where an ancestor's transform or filter has quietly clipped our
     // fixed backdrop to the document's width instead of the viewport's.
     'html.dcui2p-on, html.dcui2p-on body { background: #000 !important; }',
-    // The site keeps a scroll container whose scrollbar sits at the right edge
-    // of the screen, so a pale strip shows beside the spread. Hiding it is a
-    // restyle and nothing more - the container still scrolls, and the class
-    // comes off again on teardown.
-    'html.dcui2p-on .dcui2p-noscroll { scrollbar-width: none !important; }',
-    'html.dcui2p-on .dcui2p-noscroll::-webkit-scrollbar { width: 0 !important; height: 0 !important; }',
     '#dcui2p-help {',
     '  position: fixed; left: 50%; top: 50%; transform: translate(-50%, -50%);',
     '  z-index: 2147483646; background: rgba(0,0,0,0.92); color: #fff;',
@@ -729,20 +724,6 @@
     style.id = 'dcui2p-style';
     style.textContent = CSS;
     document.head.appendChild(style);
-  }
-
-  // Tag the reader's ancestors so the rule above can reach whichever of them
-  // owns the scrollbar. Deliberately only ancestors: the page browser's
-  // thumbnail grid is a cousin, and it needs its scrollbar to stay.
-  function hideEdgeScrollbars(on) {
-    if (on) {
-      const chain = [];
-      for (let n = q(SEL.outer); n && n.nodeType === 1; n = n.parentElement) chain.push(n);
-      chain.push(document.body, document.documentElement);
-      for (const el of chain) if (el) el.classList.add('dcui2p-noscroll');
-    } else {
-      for (const el of qa('.dcui2p-noscroll')) el.classList.remove('dcui2p-noscroll');
-    }
   }
 
   function backdrop(on) {
@@ -848,6 +829,7 @@
   }
 
   let applying = false;
+  let observer = null;
 
   function apply() {
     if (applying) return;
@@ -936,7 +918,6 @@
       root.style.setProperty('--dcui2p-w', boxW + 'px');
       root.style.setProperty('--dcui2p-left', left + 'px');
       backdrop(true);
-      hideEdgeScrollbars(true);
 
       // Map carousel roles (prev/cur/next) onto the two visible slots. Which
       // role lands on the left depends on whether the current page leads its
@@ -955,6 +936,11 @@
         // would otherwise poke out beside the centred container.
         canvas.classList.toggle('dcui2p-off', canvas !== leftEl && canvas !== rightEl);
       }
+      // Throw away the mutation records our own writes just produced.
+      // `applying` cannot do this alone: observer callbacks are delivered
+      // asynchronously, so by the time one runs this flag is false again and
+      // every apply() schedules the next - a loop at frame rate.
+      if (observer) observer.takeRecords();
     } finally {
       applying = false;
     }
@@ -1012,8 +998,6 @@
       diffs.push('root still carries our classes: ' + document.documentElement.className);
     }
     if (q('#dcui2p-backdrop')) diffs.push('our backdrop is still in the DOM');
-    const stillHidden = qa('.dcui2p-noscroll').length;
-    if (stillHidden) diffs.push(stillHidden + ' element(s) still have their scrollbar hidden');
 
     const canvases = qa('canvas', host);
     const tagged = canvases.filter((c) => /dcui2p/.test(c.className));   // left/right/off
@@ -1046,7 +1030,6 @@
       root.style.removeProperty('--dcui2p-left');
       root.style.removeProperty('--dcui2p-dim');
       backdrop(false);
-      hideEdgeScrollbars(false);
       toggleHelp(false);
       for (const canvas of qa('canvas', q(SEL.host) || document)) {
         canvas.classList.remove('dcui2p-left', 'dcui2p-right', 'dcui2p-off');
@@ -1311,6 +1294,15 @@
 
       if (!landed) {
         const now = await settledPage(JUMP_TIMEOUT, SETTLE_QUIET);
+
+        // No page counter at all - the reader is in trouble (its signed image
+        // URLs expire, and it drops the chrome when a page fails to load).
+        // That is not a jump landing 122 pages out, and must not be taken as
+        // evidence that jumping is broken.
+        if (!now) {
+          warn('lost the page counter while jumping - leaving the jump alone');
+          return 0;
+        }
         if (now !== before) {
           // It navigated, just not where we asked. Calibrate against the
           // thumbnail we actually clicked and let the caller correct this one.
@@ -2003,9 +1995,18 @@
   // ------------------------------------------------------------------- boot
 
   let pending = 0;
+  let lastApply = 0;
+
+  // Laying out more than a few times a second serves nobody, and a ceiling
+  // means that even a feedback loop we have not thought of costs a trickle of
+  // work rather than a core.
   function schedule() {
     if (pending) return;
-    pending = requestAnimationFrame(() => { pending = 0; apply(); });
+    const since = Date.now() - lastApply;
+    const run = () => { pending = 0; lastApply = Date.now(); apply(); };
+    pending = since < MIN_APPLY_GAP
+      ? setTimeout(run, MIN_APPLY_GAP - since)
+      : requestAnimationFrame(run);
   }
 
   function watch() {
@@ -2015,7 +2016,7 @@
     // The reader rewrites inline transforms on every turn, recycles canvases,
     // and rewrites the page counter. One observer over the whole reader
     // catches all of it; `applying` keeps our own writes from re-triggering.
-    const observer = new MutationObserver((records) => {
+    observer = new MutationObserver((records) => {
       state.stats.mutations += records.length;
       trackPage();
       if (!applying) schedule();

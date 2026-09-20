@@ -80,7 +80,7 @@ Object.defineProperty(global, 'navigator', { value: {}, configurable: true });
 const disk = { 'dcui2p:jumpWorks': 'true' };
 global.localStorage = { getItem: (k) => (k in disk ? disk[k] : null), setItem: (k, v) => { disk[k] = v; } };
 global.requestAnimationFrame = (f) => setTimeout(f, 0);
-global.MutationObserver = class { observe() {} };
+global.MutationObserver = class { observe() {} takeRecords() { return []; } };
 global.getComputedStyle = () => ({ transform: 'none', visibility: 'visible', width: '2130px',
   left: '0px', overflow: 'hidden', backgroundColor: 'rgb(0,0,0)' });
 global.MouseEvent = class { constructor(t, i) { this.type = t; Object.assign(this, i); } };

@@ -57,7 +57,7 @@ const disk = { 'dcui2p:jumpWorks': 'true' };
 global.localStorage = { getItem: (k) => (k in disk ? disk[k] : null), setItem: (k, v) => { disk[k] = v; } };
 // Drive the pad loop by hand so a press can be held for an exact number of frames.
 global.requestAnimationFrame = (f) => { frames.push(f); return frames.length; };
-global.MutationObserver = class { observe() {} };
+global.MutationObserver = class { observe() {} takeRecords() { return []; } };
 global.MouseEvent = class { constructor(type, init) { this.type = type; Object.assign(this, init); } };
 global.KeyboardEvent = global.MouseEvent;
 
