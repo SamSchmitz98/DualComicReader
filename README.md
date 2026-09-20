@@ -125,6 +125,12 @@ watches the same gesture, lets the reader do whatever it does, then completes
 the move to the row the swipe was asking for, measured from the page the
 swipe started on. That is correct whether the reader turned a page or not.
 
+The fade starts mid-drag, as soon as the gesture is clearly a horizontal
+swipe, rather than at the release. A canvas reader draws its reaction to a
+drag into the bitmap — pages sliding under the pointer — and no amount of CSS
+pinning holds that still, so covering the gesture is the only way to hide it.
+A drag that turns out not to be a swipe releases the fade on the spot.
+
 The reader's on-screen buttons and its page browser still move one page at a
 time, and the pairing follows wherever they land.
 

@@ -74,6 +74,7 @@
   const FADE_MS = 80;             // fade out/in across a page turn; drives CSS and the wait
   const FADE_MAX_MS = 1800;       // never hold the screen faded out longer than this (a two-page jump takes ~1.3s)
   const SETTLE_QUIET = 620;       // ms of no page change that counts as "arrived"
+  const SWIPE_ARM_PX = 45;        // fade out here, before the gesture is over
   const SWIPE_MIN_PX = 60;        // shorter than this is a click, not a swipe
   const SWIPE_MAX_MS = 900;       // slower than this is a pan or a hesitation, not a swipe
   const SWIPE_RATIO = 2;          // must be at least this much more horizontal than vertical
@@ -1306,6 +1307,9 @@
   let gesture = null;
 
   function onPointerDown(e) {
+    // A previous gesture that never got its pointerup (pointer left the
+    // window, say) must not leave the screen faded out.
+    if (gesture && gesture.armed) setTurning(false);
     gesture = null;
     if (!e.isTrusted || e.isPrimary === false) return;
     if (e.pointerType === 'mouse' && e.button !== 0) return;
@@ -1315,7 +1319,36 @@
     // Buttons, links and open modals (settings, the page browser) keep their
     // own gestures - scrolling the thumbnail grid must not turn the page.
     if (t.closest('button, a, input, select, textarea, .reader-modal')) return;
-    gesture = { x: e.clientX, y: e.clientY, at: Date.now(), page: currentPage(), id: e.pointerId };
+    gesture = { x: e.clientX, y: e.clientY, at: Date.now(), page: currentPage(),
+                id: e.pointerId, armed: false };
+  }
+
+  // Fade out mid-drag, as soon as the gesture is clearly a horizontal swipe,
+  // rather than waiting for the release. The reader reacts to a drag while it
+  // is still happening, and a canvas reader draws that reaction INTO the
+  // bitmap - pages sliding under the pointer - which no amount of CSS pinning
+  // can hold still. Covering the gesture from here is the only way to hide it.
+  //
+  // Armed slightly before the swipe threshold so the fade is complete by the
+  // time the reader commits. If the drag then turns out not to be a swipe, the
+  // fade is released on the spot.
+  function onPointerMove(e) {
+    const g = gesture;
+    if (!g || !e.isTrusted || e.pointerId !== g.id) return;
+    const dx = e.clientX - g.x;
+    const dy = e.clientY - g.y;
+    const swiping = Math.abs(dx) >= SWIPE_ARM_PX &&
+                    Math.abs(dx) >= SWIPE_RATIO * Math.abs(dy) &&
+                    Date.now() - g.at <= SWIPE_MAX_MS;
+    if (swiping) {
+      g.armed = true;
+      // Re-arming on each move also keeps the fade watchdog from releasing
+      // the screen part-way through a long drag.
+      if (state.smooth) setTurning(true);
+    } else if (g.armed) {
+      g.armed = false;
+      setTurning(false);
+    }
   }
 
   function onPointerUp(e) {
@@ -1325,12 +1358,22 @@
     const dx = e.clientX - g.x;
     const dy = e.clientY - g.y;
     const ms = Date.now() - g.at;
-    if (Math.abs(dx) < SWIPE_MIN_PX || Math.abs(dx) < SWIPE_RATIO * Math.abs(dy) || ms > SWIPE_MAX_MS) return;
+    const isSwipe = Math.abs(dx) >= SWIPE_MIN_PX &&
+                    Math.abs(dx) >= SWIPE_RATIO * Math.abs(dy) &&
+                    ms <= SWIPE_MAX_MS;
+    if (!isSwipe) {
+      if (g.armed) setTurning(false);
+      return;
+    }
     // Swiping left pulls the next page in, as in the stock reader.
-    completeSwipe(dx < 0 ? 1 : -1, g.page, { dx: Math.round(dx), dy: Math.round(dy), ms: ms, type: e.pointerType });
+    completeSwipe(dx < 0 ? 1 : -1, g.page,
+      { dx: Math.round(dx), dy: Math.round(dy), ms: ms, type: e.pointerType, armed: g.armed });
   }
 
-  function onPointerCancel() { gesture = null; }
+  function onPointerCancel() {
+    if (gesture && gesture.armed) setTurning(false);
+    gesture = null;
+  }
 
   async function completeSwipe(dir, startPage, info) {
     if (!startPage || state.navigating || state.passThrough || state.jumpWorks === false) return;
@@ -1340,6 +1383,7 @@
 
     state.navigating = true;
     state.navReason = 'swipe ' + (dir > 0 ? 'forward' : 'back') + ' to ' + target;
+    const darkFrom = Date.now() - (info.armed ? info.ms : 0);
     try {
       if (state.smooth) setTurning(true);
 
@@ -1353,6 +1397,9 @@
           (own ? 'turned ' + startPage + ' -> ' + rested : 'did not turn') + '; target ' + target);
 
       await goToPage(target, 'swipe ' + (dir > 0 ? 'forward' : 'back'));
+      // The fade covers the drag as well as the move, so this is the whole
+      // time the screen is dark - the number to tune SWIPE_ARM_PX against.
+      if (state.smooth) log('swipe: screen dark for ' + (Date.now() - darkFrom) + 'ms');
     } finally {
       state.navigating = false;
       apply();
@@ -1553,6 +1600,7 @@
     window.addEventListener('resize', schedule);
     window.addEventListener('pointerup', onCornerTap, true);
     window.addEventListener('pointerdown', onPointerDown, true);
+    window.addEventListener('pointermove', onPointerMove, true);
     window.addEventListener('pointerup', onPointerUp, true);
     window.addEventListener('pointercancel', onPointerCancel, true);
 
