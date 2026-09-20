@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         DCUI Two-Page View
 // @namespace    https://github.com/SamSchmitz98/DualComicReader
-// @version      1.5.0
+// @version      1.5.1
 // @description  Shows two portrait pages side by side in the DC Universe Infinite web reader, like an open print comic. Layout only - no downloading, extracting or re-hosting of artwork.
 // @author       SamSchmitz98
 // @match        https://www.dcuniverseinfinite.com/comics/book/*
@@ -64,7 +64,7 @@
     pageCount: '.page-count',
   };
 
-  const VERSION = (typeof GM_info !== 'undefined' && GM_info.script && GM_info.script.version) || '1.5.0';
+  const VERSION = (typeof GM_info !== 'undefined' && GM_info.script && GM_info.script.version) || '1.5.1';
 
   const DEFAULT_ASPECT = 0.652;   // standard US comic page, used until the manifest loads
   const MIN_BOX = 260;            // below this a pair is unreadable; fall back to single page
@@ -174,6 +174,13 @@
   const qa = (sel, root = document) => [...root.querySelectorAll(sel)];
   const onReaderPage = () => /\/c\/reader(\/|$)/.test(location.pathname);
   const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+
+  // The usable width, EXCLUDING any scrollbar. window.innerWidth includes it,
+  // and the site lays itself out inside clientWidth - so measuring against
+  // innerWidth centred the spread half a scrollbar to the right and made the
+  // restore check report a phantom 15px difference every time.
+  const viewW = () => document.documentElement.clientWidth || window.innerWidth;
+  const viewH = () => document.documentElement.clientHeight || window.innerHeight;
 
   // Sandboxing userscript engines hand the script a wrapped `window`, and
   // UIEvent constructors refuse it for the `view` property ("Failed to convert
@@ -456,7 +463,8 @@
         '   <- ' + targetPage(page, -1) + ' | ' + targetPage(page, 1) + ' ->',
       '',
       'box        ' + (L.boxW || '?') + 'px   left=' + (L.left || 0) + 'px   span=' + (L.spanW || '?') + 'px',
-      'viewport   ' + window.innerWidth + 'x' + window.innerHeight +
+      'viewport   ' + viewW() + 'x' + viewH() +
+        (viewW() !== window.innerWidth ? ' (' + (window.innerWidth - viewW()) + 'px scrollbar)' : '') +
         '   ideal box=' + Math.round(window.innerHeight * aspectOf(page)) + 'px',
       'manifest   ' + state.manifestDecoded + '/' + (state.manifestExpected || '?') + ' decoded, ' +
         spreadPages().length + ' spreads' +
@@ -616,7 +624,8 @@
         '  jumpOffset=' + state.jumpOffset + '  passThrough=' + state.passThrough,
       'manifest:  ' + state.manifestDecoded + '/' + state.manifestExpected +
         ' decoded, spreads at ' + (spreadPages().join(', ') || 'none'),
-      'layout:    viewport ' + window.innerWidth + 'x' + window.innerHeight +
+      'layout:    viewport ' + viewW() + 'x' + viewH() +
+        (viewW() !== window.innerWidth ? ' (+' + (window.innerWidth - viewW()) + 'px scrollbar)' : '') +
         '  box=' + state.boxW + 'px  left=' + (state.last.left || 0) + 'px',
       '',
       'rows around here:',
@@ -861,8 +870,8 @@
     if (!page) return;
     ensureRows();
 
-    const vw = window.innerWidth;
-    const vh = window.innerHeight;
+    const vw = viewW();
+    const vh = viewH();
     const decision = pairDecision(page);
 
     // The box the reader will fit the page into. Capped at half the viewport
@@ -961,8 +970,8 @@
     const dpr = window.devicePixelRatio || 1;
     const diffs = [];
 
-    if (Math.abs(px(cs.width) - window.innerWidth) > 2) {
-      diffs.push('container is ' + cs.width + ', expected the full viewport (' + window.innerWidth + 'px)');
+    if (Math.abs(px(cs.width) - viewW()) > 2) {
+      diffs.push('container is ' + cs.width + ', expected the full viewport (' + viewW() + 'px)');
     }
     if (px(cs.left) !== 0) diffs.push('container left is ' + cs.left + ', expected 0');
     if (state.stock && cs.overflow !== state.stock.overflow) {
@@ -980,7 +989,7 @@
     if (styled.length) diffs.push(styled.length + ' canvas(es) still have forced transforms');
 
     const widths = [...new Set(canvases.map((c) => c.width))];
-    const expected = Math.round(window.innerWidth * dpr);
+    const expected = Math.round(viewW() * dpr);
     if (widths.length !== 1 || Math.abs(widths[0] - expected) > 4) {
       diffs.push('canvas buffers are ' + widths.join('/') + 'px wide, expected ~' + expected +
                  ' (the reader may not have redrawn yet)');
@@ -1051,7 +1060,7 @@
     const rect = host ? host.getBoundingClientRect() : { top: 0, height: window.innerHeight };
     const y = Math.round(rect.top + rect.height / 2);
     // Aim outside our narrowed container but still over the reader surface.
-    const x = dir > 0 ? Math.round(window.innerWidth * 0.92) : Math.round(window.innerWidth * 0.08);
+    const x = dir > 0 ? Math.round(viewW() * 0.92) : Math.round(viewW() * 0.08);
     return { x: x, y: y };
   }
 
@@ -1074,8 +1083,8 @@
     const host = q(SEL.host) || document.body;
     const rect = host.getBoundingClientRect();
     const y = Math.round(rect.top + rect.height / 2);
-    const from = dir > 0 ? Math.round(window.innerWidth * 0.75) : Math.round(window.innerWidth * 0.25);
-    const to = dir > 0 ? Math.round(window.innerWidth * 0.20) : Math.round(window.innerWidth * 0.80);
+    const from = dir > 0 ? Math.round(viewW() * 0.75) : Math.round(viewW() * 0.25);
+    const to = dir > 0 ? Math.round(viewW() * 0.20) : Math.round(viewW() * 0.80);
     const target = document.elementFromPoint(from, y) || host;
 
     const touch = (x) => new Touch({ identifier: 1, target: target, clientX: x, clientY: y,

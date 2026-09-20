@@ -32,7 +32,8 @@ const counter = { get textContent() { return 'Page ' + page + ' / ' + TOTAL; } }
 global.window = global;
 global.addEventListener = (type, fn) => { (listeners['window:' + type] = listeners['window:' + type] || []).push(fn); };
 global.document = {
-  readyState: 'complete', head: el(), body: el(), documentElement: el(), activeElement: null,
+  readyState: 'complete', head: el(), body: el(), activeElement: null,
+  documentElement: el({ clientWidth: 1368, clientHeight: 614 }),
   addEventListener: (type, fn) => { (listeners['document:' + type] = listeners['document:' + type] || []).push(fn); },
   querySelector: () => null,
   querySelectorAll: (sel) => sel.includes('page-count') ? [counter] : sel.includes('page-browser') ? thumbs : [],

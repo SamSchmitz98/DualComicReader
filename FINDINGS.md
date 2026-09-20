@@ -167,6 +167,27 @@ Partly established.
   not rendered by Vue. Reader state must be found elsewhere (Nuxt payload,
   a Pinia store, or a global) if we need it at all.
 
+### Measure against `clientWidth`, not `innerWidth`
+
+The site lays its reader out inside `document.documentElement.clientWidth`,
+which excludes the scrollbar, while `window.innerWidth` includes it. Using
+the latter put the spread half a scrollbar off centre and made the restore
+check report a phantom difference on every run:
+
+```
+container is 1265px, expected the full viewport (1280px)
+canvas buffers are 3795px wide, expected ~3840
+```
+
+Both gaps are exactly one 15px scrollbar (and 45 = 15 x 3 at dpr 3). Nothing
+was wrong with the restore; the yardstick was wrong.
+
+A related cosmetic point, and *not* ours: the site keeps a scroll container
+whose scrollbar occupies the right edge of the viewport, so a pale vertical
+strip sits there whatever the script does. `elementFromPoint` returns null
+over it, which is how it was identified — it is still present with the script
+switched off.
+
 ### The carousel is not the reader's only layout
 
 Double-clicking a panel takes the reader out of carousel mode. Observed by

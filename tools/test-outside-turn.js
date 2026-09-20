@@ -41,7 +41,7 @@ global.window = global;
 global.addEventListener = () => {};
 global.document = {
   readyState: 'complete', head: el(), body: el(), activeElement: null,
-  documentElement: el({ classList: classList(rootClasses) }),
+  documentElement: el({ clientWidth: 1368, clientHeight: 614,  classList: classList(rootClasses) }),
   addEventListener() {}, querySelector: () => null,
   querySelectorAll: (sel) => sel.includes('page-count') ? [counter] : sel.includes('page-browser') ? thumbs : [],
   createElement: () => el(),

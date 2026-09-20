@@ -47,7 +47,7 @@ global.Event = class { constructor(t) { this.type = t; } };
 global.document = {
   readyState: 'complete', head: el(), activeElement: null,
   body: el({ appendChild(n) { body.kids.push(n); } }),
-  documentElement: el({
+  documentElement: el({ clientWidth: 2130, clientHeight: 1305, 
     classList: classList(rootClasses),
     requestFullscreen() {
       if (global.fullscreenAllowed === false) return Promise.reject(new Error('gesture required'));
