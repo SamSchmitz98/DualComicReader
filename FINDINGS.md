@@ -118,6 +118,14 @@ Partly established.
   the script's own move. `@run-at document-start` (binding the key handler
   immediately and deferring everything DOM-dependent to `DOMContentLoaded`)
   is the fix.
+- **Blocking a keypress means blocking its `keyup` too.** The script took the
+  real `keydown` and jumped, but the `keyup` that followed still reached the
+  reader - which turns a page on `keyup`. Every move therefore came to rest
+  one page past its target *in the direction of travel*: forwards jumps
+  landed at target+1, backwards jumps at target-1. That signature is what
+  distinguishes a leaked keypress from a thumbnail offset, which would be
+  constant regardless of direction. It also made the offset calibration
+  flip-flop, since it was chasing a sign that changed with each press.
 - **The reader navigates on `keyup` as well as `keydown`.** Sending both, as
   a synthetic keypress naturally would, turns one dispatch into two page
   turns. Combined with a poller that sometimes caught the intermediate page

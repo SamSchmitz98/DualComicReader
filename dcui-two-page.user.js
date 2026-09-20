@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         DCUI Two-Page View
 // @namespace    https://github.com/SamSchmitz98/DualComicReader
-// @version      0.9.0
+// @version      0.9.1
 // @description  Shows two portrait pages side by side in the DC Universe Infinite web reader, like an open print comic. Layout only - no downloading, extracting or re-hosting of artwork.
 // @author       SamSchmitz98
 // @match        https://www.dcuniverseinfinite.com/comics/book/*
@@ -55,7 +55,7 @@
     pageCount: '.page-count',
   };
 
-  const VERSION = (typeof GM_info !== 'undefined' && GM_info.script && GM_info.script.version) || '0.9.0';
+  const VERSION = (typeof GM_info !== 'undefined' && GM_info.script && GM_info.script.version) || '0.9.1';
 
   const DEFAULT_ASPECT = 0.652;   // standard US comic page, used until the manifest loads
   const MIN_BOX = 260;            // below this a pair is unreadable; fall back to single page
@@ -63,7 +63,7 @@
   const PROBE_TIMEOUT = 700;      // ms per strategy when probing for a working nav hook
   const JUMP_TIMEOUT = 2600;      // ms to reach the target page after a thumbnail click
   const FADE_MS = 80;             // fade out/in across a page turn; drives CSS and the wait
-  const FADE_MAX_MS = 900;        // never hold the screen faded out longer than this
+  const FADE_MAX_MS = 1800;       // never hold the screen faded out longer than this (a two-page jump takes ~1.3s)
   const SETTLE_QUIET = 620;       // ms of no page change that counts as "arrived"
   const ARRIVAL_QUIET = 320;      // after the counter hits the target: time for the neighbour canvas to redraw
 
@@ -495,7 +495,8 @@
       'settings:  enabled=' + state.enabled + '  offset=' + state.parity +
         (state.parity === 0 ? ' (cover alone)' : ' (pairs from page 1)') +
         '  smooth=' + state.smooth,
-      'nav:       hook=' + state.navStrategy + '  jumpWorks=' + state.jumpWorks +
+      'nav:       hook=' + (state.passThrough ? 'none (reader has the keys)' : 'jump:thumbnail') +
+        '  jumpWorks=' + state.jumpWorks +
         '  jumpOffset=' + state.jumpOffset + '  passThrough=' + state.passThrough,
       'manifest:  ' + state.manifestDecoded + '/' + state.manifestExpected +
         ' decoded, spreads at ' + (spreadPages().join(', ') || 'none'),
@@ -1158,9 +1159,24 @@
       return page;
     }
 
+    // Fade out before moving and stay dark until the destination has landed.
+    // The display is already correct at every intermediate state, so this is
+    // purely cosmetic - but a single fade reads as a page turn, where content
+    // swapping in place reads as a glitch.
+    if (state.smooth) { setTurning(true); await sleep(FADE_MS); }
+
     const before = page;
-    const landed = await jumpToPage(target);
+    const offsetBefore = state.jumpOffset;
+    let landed = await jumpToPage(target);
     if (landed === target) return target;
+
+    // A miss that changed the calibration is worth exactly one more try: the
+    // new offset should land it, and the screen is still faded out.
+    if (landed && state.jumpOffset !== offsetBefore) {
+      log('jump: retrying once with offset ' + state.jumpOffset);
+      landed = await jumpToPage(target);
+      if (landed === target) return target;
+    }
 
     page = currentPage();
     if (page === target) return page;
@@ -1338,10 +1354,28 @@
       if (!target || target === page || (target === 1 && page - target === 1)) return;
 
       // Stop the reader acting on this keypress; one press moves a whole row.
+      // Remember the key so its keyup is swallowed too - see onKeyUpOrPress.
+      swallowed.add(e.code || e.key);
       e.preventDefault();
       e.stopImmediatePropagation();
       step(dir);
     }
+  }
+
+  // The reader turns a page on keyup as well as keydown. Blocking only the
+  // keydown therefore leaked one reader turn per press, in the direction of
+  // the key, on top of our own jump - every move came to rest one page past
+  // its target, and the calibration chased a moving offset. A key we took on
+  // the way down must be taken on the way up.
+  const swallowed = new Set();
+
+  function onKeyUpOrPress(e) {
+    if (!e.isTrusted) return;
+    const k = e.code || e.key;
+    if (!swallowed.has(k)) return;
+    e.preventDefault();
+    e.stopImmediatePropagation();
+    if (e.type === 'keyup') swallowed.delete(k);
   }
 
   // ------------------------------------------------------------------- boot
@@ -1379,7 +1413,11 @@
     state.navStrategy = store.get('navStrategy', null);
     state.smooth = store.get('smooth', true);
     state.jumpWorks = store.get('jumpWorks', null);
-    state.jumpOffset = store.get('jumpOffset', 0);
+    // Calibrated per session, not loaded: every stored value so far was
+    // learned while a leaked keyup was adding a turn in the direction of
+    // travel, so it is noise. A genuine offset costs one retried jump to
+    // relearn.
+    state.jumpOffset = 0;
     // Only intercept arrows once the jump is known to work; until then the
     // reader keeps its keys and pages turn one at a time.
     state.passThrough = state.jumpWorks !== true;
@@ -1392,6 +1430,10 @@
     // the only way to get in front of it.
     window.addEventListener('keydown', onKeyDown, true);
     document.addEventListener('keydown', onKeyDown, true);
+    for (const type of ['keyup', 'keypress']) {
+      window.addEventListener(type, onKeyUpOrPress, true);
+      document.addEventListener(type, onKeyUpOrPress, true);
+    }
     window.addEventListener('resize', schedule);
 
     // Everything below touches the DOM, which does not exist yet at
