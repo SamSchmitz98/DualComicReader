@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         DCUI Two-Page View
 // @namespace    https://github.com/SamSchmitz98/DualComicReader
-// @version      0.5.2
+// @version      0.6.0
 // @description  Shows two portrait pages side by side in the DC Universe Infinite web reader, like an open print comic. Layout only - no downloading, extracting or re-hosting of artwork.
 // @author       SamSchmitz98
 // @match        https://www.dcuniverseinfinite.com/comics/book/*
@@ -9,6 +9,7 @@
 // @grant        GM_getValue
 // @grant        GM_setValue
 // @grant        unsafeWindow
+// @grant        GM_setClipboard
 // @noframes
 // @updateURL    https://raw.githubusercontent.com/SamSchmitz98/DualComicReader/main/dcui-two-page.user.js
 // @downloadURL  https://raw.githubusercontent.com/SamSchmitz98/DualComicReader/main/dcui-two-page.user.js
@@ -54,7 +55,7 @@
     pageCount: '.page-count',
   };
 
-  const VERSION = (typeof GM_info !== 'undefined' && GM_info.script && GM_info.script.version) || '0.5.2';
+  const VERSION = (typeof GM_info !== 'undefined' && GM_info.script && GM_info.script.version) || '0.6.0';
 
   const DEFAULT_ASPECT = 0.652;   // standard US comic page, used until the manifest loads
   const MIN_BOX = 260;            // below this a pair is unreadable; fall back to single page
@@ -83,6 +84,8 @@
     tornDown: false,    // teardown is idempotent; this is the latch
     smooth: true,       // fade across page turns instead of watching them
     jumpWorks: null,    // can we navigate by clicking a page-browser thumbnail?
+    history: [],        // every page change, recorded whether or not debug is on
+    navReason: '',      // what the script is currently doing, to attribute changes
     manifestDecoded: 0, // thumbnails that have decoded (and so have real dimensions)
     manifestExpected: 0,
     stats: { applies: 0, mutations: 0, resizes: 0, canvases: 0, rate: '0/s 0/s', since: Date.now() },
@@ -402,9 +405,101 @@
       'canvases:',
       ...canvasLines,
       '',
+      'page changes:',
+      ...(state.history.length
+        ? state.history.slice(-5).map((h) => '  ' + h.at + '  ' + (h.from || '-') + ' -> ' + h.to +
+            '  ' + h.cause + (h.leads ? '' : '  MID-ROW'))
+        : ['  (none yet)']),
+      '',
       'log:',
       ...logLines.map((l) => '  ' + l),
     ].join('\n');
+  }
+
+  // --------------------------------------------------------- change tracking
+
+  function describeVisible(page) {
+    if (!page) return 'nothing';
+    if (isSpread(page)) return 'page ' + page + ' (spread, full width)';
+    if (pairsWithNext(page)) return 'pages ' + page + ' + ' + (page + 1);
+    const row = rowFor(page);
+    if (row && row.length === 2 && row[0] !== page) {
+      return 'page ' + page + ' alone (it is the RIGHT half of [' + row.join(', ') + '])';
+    }
+    return 'page ' + page + ' alone';
+  }
+
+  // Record every page change, including ones we did not cause, so that when
+  // something unexpected shows up there is a history to look at rather than a
+  // request to reproduce it with debug switched on.
+  let lastSeenPage = 0;
+  function trackPage() {
+    const page = currentPage();
+    if (!page || page === lastSeenPage) return;
+    const from = lastSeenPage;
+    lastSeenPage = page;
+
+    const row = rowFor(page);
+    const entry = {
+      at: new Date().toLocaleTimeString(),
+      from: from, to: page,
+      cause: state.navigating ? (state.navReason || 'script') : 'reader or user',
+      row: row ? '[' + row.join(', ') + ']' : '[?]',
+      leads: !!row && row[0] === page,
+      shows: describeVisible(page),
+    };
+    state.history.push(entry);
+    if (state.history.length > 60) state.history.shift();
+
+    if (state.debug) {
+      console.log('%c[dcui2p] page ' + (from || '-') + ' -> ' + page + '%c  via ' + entry.cause +
+        '   row ' + entry.row + (entry.leads ? '' : '  <-- MID-ROW') + '   showing ' + entry.shows,
+        'color:#0a0;font-weight:bold', 'color:inherit');
+    }
+  }
+
+  // One copyable block describing what is on screen and how it got there.
+  function report() {
+    ensureRows();
+    const page = currentPage();
+    const idx = state.rowOf[page];
+    const first = Math.max(0, (idx === undefined ? 0 : idx) - 3);
+    const near = state.rows.slice(first, first + 7)
+      .map((r, i) => (first + i === idx ? '  > ' : '    ') + '[' + r.join(', ') + ']');
+
+    const lines = [
+      'dcui2p v' + VERSION + ' report',
+      '',
+      'showing:   ' + describeVisible(page),
+      'page:      ' + page + ' / ' + state.total +
+        '   row ' + (idx === undefined ? '?' : idx + 1) + ' / ' + state.rows.length,
+      'settings:  enabled=' + state.enabled + '  offset=' + state.parity +
+        (state.parity === 0 ? ' (cover alone)' : ' (pairs from page 1)') +
+        '  smooth=' + state.smooth,
+      'nav:       hook=' + state.navStrategy + '  jumpWorks=' + state.jumpWorks,
+      'manifest:  ' + state.manifestDecoded + '/' + state.manifestExpected +
+        ' decoded, spreads at ' + (spreadPages().join(', ') || 'none'),
+      'layout:    viewport ' + window.innerWidth + 'x' + window.innerHeight +
+        '  box=' + state.boxW + 'px  left=' + (state.last.left || 0) + 'px',
+      '',
+      'rows around here:',
+      ...near,
+      '',
+      'recent page changes (newest last):',
+      ...state.history.slice(-20).map((h) =>
+        '    ' + h.at + '  ' + (h.from || '-') + ' -> ' + h.to +
+        '  via ' + h.cause + '  row ' + h.row + (h.leads ? '' : '  MID-ROW')),
+    ];
+
+    const text = lines.join('\n');
+    console.log(text);
+    try {
+      if (typeof GM_setClipboard === 'function') {
+        GM_setClipboard(text);
+        console.log('%c[dcui2p] report copied to the clipboard', 'color:#0a0;font-weight:bold');
+      }
+    } catch (_) { /* clipboard is a convenience, not a requirement */ }
+    return text;
   }
 
   // ----------------------------------------------------------------- styles
@@ -925,6 +1020,7 @@
     let page = currentPage();
     if (!page || page === target) return page;
 
+    state.navReason = (why || 'goto') + ' to ' + target;
     log((why || 'goto') + ': page ' + page + ' -> ' + target);
     if (state.smooth) { setTurning(true); await sleep(FADE_MS); }
 
@@ -1157,6 +1253,7 @@
     // catches all of it; `applying` keeps our own writes from re-triggering.
     const observer = new MutationObserver((records) => {
       state.stats.mutations += records.length;
+      trackPage();
       if (!applying) schedule();
     });
     observer.observe(outer.parentElement || outer, {
@@ -1183,6 +1280,7 @@
       (state.enabled ? 'enabled' : 'DISABLED (press T)') +
       (state.debug ? ', debug on' : '') +
       '  |  T toggle · P pairing offset · S smooth turns · D debug HUD' +
+      '  |  dcui2p.report() for a copyable diagnosis' +
       (state.debug ? '' : '  |  press D for the HUD and verbose logging'),
       'color:#0a0;font-weight:bold', 'color:inherit');
 
@@ -1192,7 +1290,7 @@
     window.addEventListener('resize', schedule);
 
     // Keep the HUD honest even when nothing mutates.
-    setInterval(() => { if (state.debug) updateHud(); }, 500);
+    setInterval(() => { trackPage(); if (state.debug) updateHud(); }, 500);
 
     // The reader mounts asynchronously and the thumbnails decode a moment
     // later; retry until both are there, then hand over to the observer.
@@ -1261,6 +1359,8 @@
         verifyRestore: verifyRestore,
         snapshot: snapshot,
         stats: () => state.stats,
+        report: report,
+        history: () => state.history,
         canvases: () => {
           const host = q(SEL.host);
           if (!host) return [];

@@ -106,6 +106,14 @@ Switching debug on also replays the events that happened before you pressed
 `D` — startup and manifest reading are long over by then — and dumps a state
 summary.
 
+**Page changes are recorded whether or not debug is on.** If something
+unexpected appears, run `dcui2p.report()` afterwards: it prints (and copies) a
+block showing what is on screen, the rows around the current page, the
+settings in force, and the last 20 page changes with what caused each — the
+script's own navigation, or the reader responding to you directly. A change
+that left the current page in the middle of a row is flagged `MID-ROW`, which
+is what a lone page or a repeated page looks like from the inside.
+
 The browser console also gets a `dcui2p` handle:
 
 | Call | What it gives you |
@@ -119,6 +127,8 @@ The browser console also gets a `dcui2p` handle:
 | `dcui2p.step(1)` / `dcui2p.step(-1)` | Drive a paired page turn by hand. |
 | `dcui2p.verifyRestore()` | Diff the reader against the snapshot taken before the script touched it. |
 | `dcui2p.stats()` | Apply/mutation rates, resizes dispatched, canvas pool size. |
+| `dcui2p.report()` | One copyable block: what is on screen, the rows around it, settings, and the last 20 page changes. Copied to the clipboard automatically. |
+| `dcui2p.history()` | Every page change this session, with what caused it. |
 
 If arrow keys are not turning pages, `dcui2p.probeNav()` is the place to start
 — it will name the hook that works, and the script remembers it from then on.
