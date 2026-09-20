@@ -183,9 +183,6 @@ If arrow keys are not turning pages, `dcui2p.probeNav()` is the place to start
   pages itself; it says so in the console and hands the arrow keys back to
   the reader, which then turns one page per press. The pairing keeps working
   either way. `dcui2p.probeNav()` re-tests every hook.
-- **Page 1 is reached by the reader's own turn, not by jumping.** The
-  thumbnail for page N lands on N+1, so the cover cannot be jumped to; the
-  script lets that single press through instead.
 - **A spread advance still costs two reader page turns** (~950ms), since the
   reader animates through the page in between. The display does not change
   until the destination lands, and a brief fade covers the moment the

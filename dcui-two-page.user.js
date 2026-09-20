@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         DCUI Two-Page View
 // @namespace    https://github.com/SamSchmitz98/DualComicReader
-// @version      0.9.3
+// @version      0.9.4
 // @description  Shows two portrait pages side by side in the DC Universe Infinite web reader, like an open print comic. Layout only - no downloading, extracting or re-hosting of artwork.
 // @author       SamSchmitz98
 // @match        https://www.dcuniverseinfinite.com/comics/book/*
@@ -64,7 +64,7 @@
     pageCount: '.page-count',
   };
 
-  const VERSION = (typeof GM_info !== 'undefined' && GM_info.script && GM_info.script.version) || '0.9.3';
+  const VERSION = (typeof GM_info !== 'undefined' && GM_info.script && GM_info.script.version) || '0.9.4';
 
   const DEFAULT_ASPECT = 0.652;   // standard US comic page, used until the manifest loads
   const MIN_BOX = 260;            // below this a pair is unreadable; fall back to single page
@@ -1074,11 +1074,12 @@
   async function jumpToPage(target) {
     if (state.jumpWorks === false) return 0;
 
-    // The thumbnail's alt text and the page the reader navigates to are not
-    // the same number: clicking alt="Page 92" lands on 93. Rather than guess
-    // at the reason, measure it once and compensate - if a click lands
-    // somewhere other than asked, the difference is remembered and applied to
-    // every later jump.
+    // A clean probe shows the thumbnails are accurate: clicking alt="Page 96"
+    // lands on 96. The offset below therefore stays 0 in practice. It is kept
+    // as a safety net - if a click ever lands somewhere other than asked, the
+    // difference is measured and applied for the rest of the session - because
+    // it costs nothing and an index shift on DCUI's side would otherwise break
+    // navigation outright.
     const wanted = target - state.jumpOffset;
     const img = thumbFor(wanted);
     if (!img) return 0;
@@ -1360,9 +1361,7 @@
       const page = currentPage();
       const target = page ? targetPage(page, dir) : 0;
 
-      // The thumbnail for page N lands on N+1, which makes page 1 unreachable
-      // by jumping. A single reader turn gets there, so let that press through.
-      if (!target || target === page || (target === 1 && page - target === 1)) return;
+      if (!target || target === page) return;
 
       // If the page browser has not rendered its thumbnails yet there is
       // nothing to click, so do not take the key - let the reader turn the

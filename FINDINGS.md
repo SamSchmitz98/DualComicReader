@@ -97,9 +97,10 @@ Partly established.
   thumbnail** (`93 -> 96` in the same clean probe). The thumbnails are
   rendered by the site's Vue layer, whose click handlers do not care whether
   an event is trusted; the canvas widget's own input handling evidently does.
-  The thumbnail for `alt="Page N"` lands on page **N+1**, consistently, so
-  page 1 is unreachable by jumping and the script lets that one press through
-  to the reader.
+  The thumbnails are accurate: a later clean probe went `94 -> 96` when
+  asked for 96. An earlier note here claimed they land one page late; that
+  was wrong, and what it had actually observed was the leaked `keyup`
+  described below adding a turn in the direction of travel.
 
   This invalidates every earlier reading that said `key:focused` worked. Those
   page turns were the *real* keypress reaching the reader while the script's
@@ -132,10 +133,12 @@ Partly established.
   and dispatched again, this produced an extra turn that arrived *after* the
   script believed it had finished — indistinguishable, in the logs, from the
   reader moving on its own. Send `keydown` only.
-- **Clicking a page-browser thumbnail navigates, but not to the page its
-  `alt` text names.** Clicking `alt="Page 92"` lands on page 93. The cause was
-  not chased down; the script measures the difference on the first jump and
-  compensates from then on.
+- **Clicking a page-browser thumbnail navigates to exactly the page its
+  `alt` text names.** Several earlier readings said otherwise (`alt="Page
+  92"` "landing" on 93), and an offset-calibration mechanism was built around
+  them. Every one of those readings was contaminated - by the leaked `keyup`,
+  or by catching the counter mid-animation. The calibration is kept as a
+  zero-cost safety net, but in a clean run the offset is 0.
 - **Never treat "the counter reached the page I wanted" as arrival.** The
   reader animates through the pages in between, so a move of two pages passes
   through the destination's neighbour, and a jump passes through the
