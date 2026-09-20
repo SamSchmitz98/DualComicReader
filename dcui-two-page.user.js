@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         DCUI Two-Page View
 // @namespace    https://github.com/SamSchmitz98/DualComicReader
-// @version      1.0.0
+// @version      1.0.1
 // @description  Shows two portrait pages side by side in the DC Universe Infinite web reader, like an open print comic. Layout only - no downloading, extracting or re-hosting of artwork.
 // @author       SamSchmitz98
 // @match        https://www.dcuniverseinfinite.com/comics/book/*
@@ -64,7 +64,7 @@
     pageCount: '.page-count',
   };
 
-  const VERSION = (typeof GM_info !== 'undefined' && GM_info.script && GM_info.script.version) || '1.0.0';
+  const VERSION = (typeof GM_info !== 'undefined' && GM_info.script && GM_info.script.version) || '1.0.1';
 
   const DEFAULT_ASPECT = 0.652;   // standard US comic page, used until the manifest loads
   const MIN_BOX = 260;            // below this a pair is unreadable; fall back to single page
@@ -399,7 +399,12 @@
     const visible = page ? describeVisible(page) : 'nothing';
 
     hudElement().textContent = [
-      'DCUI 2-PAGE  ' + (state.enabled ? 'ON' : 'OFF') + '   [T]oggle [P]arity [S]mooth [D]ebug',
+      'DCUI 2-PAGE v' + VERSION + '  ' + (state.enabled ? 'ON' : 'OFF') +
+        '   [T]oggle [P]arity [S]mooth [D]ebug',
+      'touch: triple-tap this corner to show/hide',
+      'input      ' + (navigator.maxTouchPoints > 0 ? 'touch (' + navigator.maxTouchPoints + ' points)' : 'no touch') +
+        '   dpr ' + (window.devicePixelRatio || 1) +
+        '   ' + (typeof GM_info !== 'undefined' ? 'userscript' : 'extension'),
       '',
       'VISIBLE: ' + visible,
       '',
@@ -1284,6 +1289,42 @@
 
   // ---------------------------------------------------------------- hotkeys
 
+  function toggleDebug() {
+    state.debug = !state.debug;
+    store.set('debug', state.debug);
+    document.documentElement.classList.toggle('dcui2p-debug', state.debug && state.enabled);
+    console.log('%c[dcui2p] debug ' + (state.debug ? 'ON' : 'OFF'), 'color:#0a0;font-weight:bold');
+    // Replay what happened before debug was switched on - startup and
+    // manifest reading are over by the time anyone asks for it.
+    if (state.debug && logLines.length) {
+      console.groupCollapsed('%c[dcui2p] earlier events (' + logLines.length + ')', 'color:#0a0');
+      logLines.forEach((line) => console.log(line));
+      console.groupEnd();
+      console.log('%c[dcui2p]%c state:', 'color:#0a0;font-weight:bold', 'color:inherit', {
+        page: currentPage(), total: state.total, rows: state.rows.length,
+        spreads: spreadPages(), navHook: state.navStrategy, boxW: state.boxW,
+        parity: state.parity, manifestPages: state.manifest.filter(Boolean).length,
+      });
+    }
+    updateHud();
+  }
+
+  // A tablet has no D key and no console, so without this there is no way to
+  // find out why something is not working there. Three quick taps in the
+  // top-left corner toggle the HUD. pointerup covers touch, pen and mouse
+  // with one event per tap, so it can be tried on a desktop too.
+  let cornerTaps = [];
+  function onCornerTap(e) {
+    if (!e.isTrusted || !onReaderPage()) return;
+    if (e.clientX > 96 || e.clientY > 96) { cornerTaps = []; return; }
+    const now = Date.now();
+    cornerTaps = cornerTaps.filter((t) => now - t < 900).concat(now);
+    if (cornerTaps.length >= 3) {
+      cornerTaps = [];
+      toggleDebug();
+    }
+  }
+
   function isTyping(el) {
     return !!el && (/^(INPUT|TEXTAREA|SELECT)$/.test(el.tagName) || el.isContentEditable);
   }
@@ -1304,23 +1345,7 @@
     }
 
     if (key === 'd') {
-      state.debug = !state.debug;
-      store.set('debug', state.debug);
-      document.documentElement.classList.toggle('dcui2p-debug', state.debug && state.enabled);
-      console.log('%c[dcui2p] debug ' + (state.debug ? 'ON' : 'OFF'), 'color:#0a0;font-weight:bold');
-      // Replay what happened before debug was switched on - startup and
-      // manifest reading are over by the time anyone presses D.
-      if (state.debug && logLines.length) {
-        console.groupCollapsed('%c[dcui2p] earlier events (' + logLines.length + ')', 'color:#0a0');
-        logLines.forEach((line) => console.log(line));
-        console.groupEnd();
-        console.log('%c[dcui2p]%c state:', 'color:#0a0;font-weight:bold', 'color:inherit', {
-          page: currentPage(), total: state.total, rows: state.rows.length,
-          spreads: spreadPages(), navHook: state.navStrategy, boxW: state.boxW,
-          parity: state.parity, manifestPages: state.manifest.filter(Boolean).length,
-        });
-      }
-      updateHud();
+      toggleDebug();
       return;
     }
 
@@ -1453,6 +1478,7 @@
       document.addEventListener(type, onKeyUpOrPress, true);
     }
     window.addEventListener('resize', schedule);
+    window.addEventListener('pointerup', onCornerTap, true);
 
     // Everything below touches the DOM, which does not exist yet at
     // document-start.

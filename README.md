@@ -59,7 +59,7 @@ New versions are picked up automatically from this repository.
 | `T` | Toggle the script on and off. Off restores the reader's stock behavior exactly. |
 | `P` | Shift the pairing offset, for books whose numbering does not line up. Default keeps the cover alone; pressing `P` pairs from page 1 instead. |
 | `S` | Toggle the fade across page turns. On by default. |
-| `D` | Toggle the debug HUD. |
+| `D` | Toggle the debug HUD. On a touch device, triple-tap the top-left corner instead. |
 | `←` `→` | Move one *spread* at a time (via the page-browser thumbnails — the only synthetic input the reader honors). |
 
 All settings are remembered per site, via the userscript manager's
