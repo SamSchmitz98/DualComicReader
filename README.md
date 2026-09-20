@@ -168,6 +168,13 @@ To identify which control is which, open the HUD: it shows the connected pad
 and the last control pressed, as `button 7` or `stick -0.98`. Setting
 `dcui2p.state.gamepad = false` in the console turns controller reading off.
 
+**Turn off the streaming client's mouse mode** (Moonlight calls it
+gamepad-as-mouse). With it on, the controller never reaches the browser as a
+gamepad at all: presses arrive as mouse clicks at a cursor the stick is also
+moving, so a click with a little drift can read as a swipe while the reader's
+own click-to-advance fires as well. With it off the pad comes through
+normally and the HUD names it.
+
 The reader's on-screen buttons and its page browser still move one page at a
 time, and the pairing follows wherever they land.
 
