@@ -445,3 +445,21 @@ canvases no longer overlap.
 | Q2 All pages in the DOM? | No — a recycled pool of exactly 3 (prev/current/next) |
 | Q3 Reader navigation | `keydown` on `document` and `window`, plus mouse/touch drag; unlabeled icon buttons in hover-revealed chrome; `span.page-count` reports `"Page N / Total"` |
 | Q4 Spreads | Single wide images, `aspect > 1`, enumerable up front from the thumbnail manifest |
+
+## Acceptance (1.0)
+
+The brief's acceptance criteria, as confirmed in a live session on the test
+issue (238 pages, spreads at 3, 48, 51 and 218):
+
+| Criterion | Result |
+|---|---|
+| Two pages side by side on a 16:9 window | Confirmed - pairs sit flush, centred on black |
+| Cover alone, spreads full width | Confirmed - rows computed from the thumbnail manifest |
+| Arrow keys page through pairs | Confirmed - one press per spread, via the thumbnail jump |
+| `P` fixes off-by-one pairing | Works; rarely needed now that rows come from the manifest |
+| `T` returns the reader to stock behavior | Confirmed |
+| Casting the Chrome tab to a TV shows the same layout | Confirmed |
+| No network requests added by the script | By construction - the script contains no fetch, XHR, image or beacon call |
+
+Tested on one title, in Chrome on Windows at device pixel ratios of 1 and 1.5.
+Other titles, browsers and platforms are untested.
