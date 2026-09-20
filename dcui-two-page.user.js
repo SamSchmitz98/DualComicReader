@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         DCUI Two-Page View
 // @namespace    https://github.com/SamSchmitz98/DualComicReader
-// @version      0.4.1
+// @version      0.4.2
 // @description  Shows two portrait pages side by side in the DC Universe Infinite web reader, like an open print comic. Layout only - no downloading, extracting or re-hosting of artwork.
 // @author       SamSchmitz98
 // @match        https://www.dcuniverseinfinite.com/comics/book/*
@@ -54,7 +54,7 @@
     pageCount: '.page-count',
   };
 
-  const VERSION = (typeof GM_info !== 'undefined' && GM_info.script && GM_info.script.version) || '0.4.1';
+  const VERSION = (typeof GM_info !== 'undefined' && GM_info.script && GM_info.script.version) || '0.4.2';
 
   const DEFAULT_ASPECT = 0.652;   // standard US comic page, used until the manifest loads
   const MIN_BOX = 260;            // below this a pair is unreadable; fall back to single page
@@ -78,6 +78,7 @@
     rowsKey: '',        // signature of the inputs the rows were built from
     aligned: false,     // have we nudged onto a row boundary since load?
     stock: null,        // snapshot of the untouched reader, to verify T restores it
+    tornDown: false,    // teardown is idempotent; this is the latch
     manifestDecoded: 0, // thumbnails that have decoded (and so have real dimensions)
     manifestExpected: 0,
     stats: { applies: 0, mutations: 0, resizes: 0, canvases: 0, rate: '0/s 0/s', since: Date.now() },
@@ -518,7 +519,19 @@
       state.stats.canvases = count;
     }
 
-    if (!state.enabled) return teardown();
+    // Do NOT call teardown() from here. teardown dispatches a resize to make
+    // the reader redraw, that resize schedules another apply, and this branch
+    // would call teardown again - unbounded mutual recursion. Teardown is
+    // driven by the T hotkey and by navigation, never by the observer.
+    if (!state.enabled) return;
+    state.tornDown = false;
+
+    // Capture the untouched reader on the very first apply, before this
+    // function modifies anything. Doing it during boot was unreliable: the
+    // resize listener is bound earlier, so a resize could apply the layout
+    // first and the "stock" baseline would record our own changes.
+    if (!state.stock) state.stock = snapshot();
+
     if (!state.manifest.length) readManifest();
 
     // A pair takes two page turns, and between them the counter sits on the
@@ -607,19 +620,54 @@
     };
   }
 
+  // Compare geometry against what stock *would be now* rather than against
+  // the snapshot's raw numbers: the window may have been resized since, and a
+  // container that correctly fills a resized viewport is not a failure to
+  // restore. Only the structural leftovers are compared literally.
   function verifyRestore() {
-    if (!state.stock) return log('restore check: no baseline was captured');
-    const now = snapshot();
-    if (!now) return log('restore check: reader is gone');
-    const diffs = Object.keys(state.stock)
-      .filter((k) => String(state.stock[k]) !== String(now[k]))
-      .map((k) => k + ': ' + state.stock[k] + ' -> ' + now[k]);
-    if (!diffs.length) log('restore check: OK, reader matches its pre-script state');
-    else warn('restore check: ' + diffs.length + ' difference(s) - ' + diffs.join('; '));
+    const host = q(SEL.host);
+    if (!host) return log('restore check: reader is gone');
+
+    const cs = getComputedStyle(host);
+    const px = (v) => Math.round(parseFloat(v) || 0);
+    const dpr = window.devicePixelRatio || 1;
+    const diffs = [];
+
+    if (Math.abs(px(cs.width) - window.innerWidth) > 2) {
+      diffs.push('container is ' + cs.width + ', expected the full viewport (' + window.innerWidth + 'px)');
+    }
+    if (px(cs.left) !== 0) diffs.push('container left is ' + cs.left + ', expected 0');
+    if (state.stock && cs.overflow !== state.stock.overflow) {
+      diffs.push('overflow is ' + cs.overflow + ', was ' + state.stock.overflow);
+    }
+    if (/dcui2p/.test(document.documentElement.className)) {
+      diffs.push('root still carries our classes: ' + document.documentElement.className);
+    }
+    if (q('#dcui2p-backdrop')) diffs.push('our backdrop is still in the DOM');
+
+    const canvases = qa('canvas', host);
+    const tagged = canvases.filter((c) => /dcui2p/.test(c.className));
+    if (tagged.length) diffs.push(tagged.length + ' canvas(es) still carry our classes');
+    const styled = canvases.filter((c) => c.style.transform && /!important/.test(c.getAttribute('style') || ''));
+    if (styled.length) diffs.push(styled.length + ' canvas(es) still have forced transforms');
+
+    const widths = [...new Set(canvases.map((c) => c.width))];
+    const expected = Math.round(window.innerWidth * dpr);
+    if (widths.length !== 1 || Math.abs(widths[0] - expected) > 4) {
+      diffs.push('canvas buffers are ' + widths.join('/') + 'px wide, expected ~' + expected +
+                 ' (the reader may not have redrawn yet)');
+    }
+
+    if (!diffs.length) log('restore check: OK, the reader is back to stock');
+    else warn('restore check: ' + diffs.length + ' issue(s) - ' + diffs.join('; '));
     return diffs;
   }
 
   function teardown() {
+    // Idempotent: the resize we dispatch below makes the reader redraw, which
+    // the observer sees, so without this a single T press can re-enter here.
+    if (state.tornDown) return;
+    state.tornDown = true;
     applying = true;
     try {
       const root = document.documentElement;
@@ -1015,9 +1063,8 @@
         if (!readManifest()) pollManifest();
         if (watch()) {
           clearInterval(boot);
-          // Capture the untouched reader before apply() first modifies it.
-          state.stock = snapshot();
-          state.stats.canvases = state.stock ? state.stock.canvasCount : 0;
+          // The baseline is captured by apply() itself, immediately before
+          // its first modification - see the note there.
           ensureRows();
           log('ready: page ' + currentPage() + ' of ' + state.total + ', ' + state.rows.length + ' rows');
           apply();
