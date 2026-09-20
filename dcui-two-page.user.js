@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         DCUI Two-Page View
 // @namespace    https://github.com/SamSchmitz98/DualComicReader
-// @version      1.5.2
+// @version      1.5.3
 // @description  Shows two portrait pages side by side in the DC Universe Infinite web reader, like an open print comic. Layout only - no downloading, extracting or re-hosting of artwork.
 // @author       SamSchmitz98
 // @match        https://www.dcuniverseinfinite.com/comics/book/*
@@ -64,7 +64,7 @@
     pageCount: '.page-count',
   };
 
-  const VERSION = (typeof GM_info !== 'undefined' && GM_info.script && GM_info.script.version) || '1.5.2';
+  const VERSION = (typeof GM_info !== 'undefined' && GM_info.script && GM_info.script.version) || '1.5.3';
 
   const DEFAULT_ASPECT = 0.652;   // standard US comic page, used until the manifest loads
   const MIN_BOX = 260;            // below this a pair is unreadable; fall back to single page
@@ -692,6 +692,12 @@
     '  visibility: visible !important; opacity: 0.15 !important;',
     '  outline: 2px dashed #f44 !important; outline-offset: -2px;',
     '}',
+    // The document is a few pixels narrower than the viewport, so a strip of
+    // bare viewport background shows beside the spread - white, by default.
+    // Painting the root black covers it whatever the cause, including the
+    // case where an ancestor's transform or filter has quietly clipped our
+    // fixed backdrop to the document's width instead of the viewport's.
+    'html.dcui2p-on, html.dcui2p-on body { background: #000 !important; }',
     // The site keeps a scroll container whose scrollbar sits at the right edge
     // of the screen, so a pale strip shows beside the spread. Hiding it is a
     // restyle and nothing more - the container still scrolls, and the class
