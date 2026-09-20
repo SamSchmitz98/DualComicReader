@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         DCUI Two-Page View
 // @namespace    https://github.com/SamSchmitz98/DualComicReader
-// @version      0.5.1
+// @version      0.5.2
 // @description  Shows two portrait pages side by side in the DC Universe Infinite web reader, like an open print comic. Layout only - no downloading, extracting or re-hosting of artwork.
 // @author       SamSchmitz98
 // @match        https://www.dcuniverseinfinite.com/comics/book/*
@@ -54,7 +54,7 @@
     pageCount: '.page-count',
   };
 
-  const VERSION = (typeof GM_info !== 'undefined' && GM_info.script && GM_info.script.version) || '0.5.1';
+  const VERSION = (typeof GM_info !== 'undefined' && GM_info.script && GM_info.script.version) || '0.5.2';
 
   const DEFAULT_ASPECT = 0.652;   // standard US comic page, used until the manifest loads
   const MIN_BOX = 260;            // below this a pair is unreadable; fall back to single page
@@ -379,7 +379,10 @@
         '   aspect ' + aspectOf(page).toFixed(3) + (isSpread(page) ? ' SPREAD' : ''),
       'next page  ' + (page + 1) + '   aspect ' + aspectOf(page + 1).toFixed(3) +
         (isSpread(page + 1) ? ' SPREAD' : ''),
-      'pairing    ' + (L.showPair ? 'YES' : 'no') + '  (' + (L.why || '-') + ')   offset=' + state.parity,
+      'pairing    ' + (L.showPair ? 'YES' : 'no') + '  (' + (L.why || '-') + ')',
+      'offset     ' + state.parity + '  (' +
+        (state.parity === 0 ? 'cover alone: [1] [2,3] [4,5]' : 'pairs from page 1: [1,2] [3,4]') +
+        ')  press P to flip',
       'row        ' + (state.rowOf[page] === undefined ? '?' : (state.rowOf[page] + 1)) +
         ' / ' + (state.rows.length || '?') + '   [' + (rowFor(page) || []).join(', ') + ']' +
         '   <- ' + targetPage(page, -1) + ' | ' + targetPage(page, 1) + ' ->',
@@ -956,6 +959,21 @@
         return;
       }
       await goToPage(target, 'step ' + (dir > 0 ? 'forward' : 'back'));
+
+      // Our own navigation must come to rest on a page that leads a row. If it
+      // does not - a jump that stopped short, a step the reader dropped - the
+      // layout shows a lone page, or repeats the page you just read on the
+      // left. Correct it once.
+      //
+      // Only after OUR moves: the reader's own click-to-advance and swipe are
+      // the user's business, and yanking them back to a boundary would break
+      // controls the brief says to leave working.
+      const settled = currentPage();
+      const row = rowFor(settled);
+      if (row && row[0] !== settled) {
+        warn('settled on page ' + settled + ', mid-row [' + row.join(', ') + '] - correcting to ' + row[0]);
+        await goToPage(row[0], 'correct');
+      }
     } finally {
       state.navigating = false;
       apply();
