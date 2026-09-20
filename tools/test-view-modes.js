@@ -28,7 +28,9 @@ const el = (extra) => Object.assign({
 // Three canvases, so a scale can be put on one of them.
 const canvases = [0, 1, 2].map((i) => el({
   width: 1276, height: 1957,
-  style: { transform: 'translateX(' + ((i - 1) * 851) + 'px)', setProperty() {}, removeProperty() {} },
+  style: { transform: 'translateX(' + ((i - 1) * 851) + 'px)', zIndex: '',
+           setProperty() {}, removeProperty() {} },
+  getBoundingClientRect: () => ({ left: 0, top: 0, width: 851, height: 1305 }),
 }));
 const host = el({ id: 'host' });
 const thumbs = Array.from({ length: TOTAL }, (_, i) => el({
@@ -128,6 +130,24 @@ const settle = () => new Promise((r) => setTimeout(r, 40));
     body.kids.find((n) => n.id === 'dcui2p-help').textContent) );
   key('h');
   check('H puts it away', helpShown() === false);
+
+  // Double-clicking a panel parks every canvas at translate(0,0) and drops the
+  // ones it is not showing to opacity 0. Offsets then say nothing about which
+  // canvas holds which page, so the stacking order has to carry it - 3, 2, 1
+  // being current, next, previous. Without that the roles go out in DOM order,
+  // and the page the reader wanted shown can be the one we hide.
+  canvases.forEach((c, i) => {
+    c.style.transform = 'translate(0px, 0px)';
+    c.style.zIndex = String(3 - i);            // cur, next, prev
+  });
+  api.apply();
+  await settle();
+  const roles = api.canvases().map((c) => c.role).join(',');
+  check('collapsed offsets fall back to the stacking order, not DOM order',
+    roles === 'cur,next,prev');
+  canvases.forEach((c, i) => { c.style.transform = 'translate(' + ((i - 1) * 851) + 'px, 0px)'; });
+  api.apply();
+  await settle();
 
   // Zoom: a scale on the canvas transform is the form we would actively break.
   canvases[1].style.transform = 'translateX(0px) scale(2.4)';

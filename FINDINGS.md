@@ -167,6 +167,27 @@ Partly established.
   not rendered by Vue. Reader state must be found elsewhere (Nuxt payload,
   a Pinia store, or a global) if we need it at all.
 
+### The carousel is not the reader's only layout
+
+Double-clicking a panel takes the reader out of carousel mode. Observed by
+diffing the whole reader subtree before and after:
+
+```
+before   z3 (no transform)   z2 translate(851px)   z1 translate(-851px)   opacity 1, 1, 1
+after    z3 (no transform)   z2 translate(0px)     z1 translate(0px)      opacity 1, 0, 0
+```
+
+Two assumptions break at once. Every canvas is parked at the same offset, so
+a transform no longer says which page a canvas holds; and the reader hides
+the canvases it is not showing with **opacity**, which nothing in our CSS
+overrode — so a canvas placed in a visible slot could be fully transparent.
+In that snapshot every canvas was either hidden by us or transparent, which
+is a blank screen.
+
+The stacking order survives this and has been constant since the first probe:
+**z-index 3 = current, 2 = next, 1 = previous.** It is the fallback when
+offsets collapse, and arguably the better primary signal.
+
 ### Identifying which canvas is which
 
 The widget stores its own slot bookkeeping directly on the canvas elements: two

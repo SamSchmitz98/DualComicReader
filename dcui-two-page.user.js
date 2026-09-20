@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         DCUI Two-Page View
 // @namespace    https://github.com/SamSchmitz98/DualComicReader
-// @version      1.3.1
+// @version      1.4.0
 // @description  Shows two portrait pages side by side in the DC Universe Infinite web reader, like an open print comic. Layout only - no downloading, extracting or re-hosting of artwork.
 // @author       SamSchmitz98
 // @match        https://www.dcuniverseinfinite.com/comics/book/*
@@ -64,7 +64,7 @@
     pageCount: '.page-count',
   };
 
-  const VERSION = (typeof GM_info !== 'undefined' && GM_info.script && GM_info.script.version) || '1.3.1';
+  const VERSION = (typeof GM_info !== 'undefined' && GM_info.script && GM_info.script.version) || '1.4.0';
 
   const DEFAULT_ASPECT = 0.652;   // standard US comic page, used until the manifest loads
   const MIN_BOX = 260;            // below this a pair is unreadable; fall back to single page
@@ -662,8 +662,12 @@
     // to have recomputed its slide offsets for the new container width. This
     // costs the page-turn animation, which is a fair trade for never being
     // mispositioned.
-    'html.dcui2p-on ' + SEL.host + ' canvas.dcui2p-left  { transform: translateX(0) !important; left: 0 !important; }',
-    'html.dcui2p-on ' + SEL.host + ' canvas.dcui2p-right { transform: translateX(var(--dcui2p-w, 0px)) !important; left: 0 !important; }',
+    'html.dcui2p-on ' + SEL.host + ' canvas.dcui2p-left  {',
+    '  transform: translateX(0) !important; left: 0 !important; opacity: 1 !important;',
+    '}',
+    'html.dcui2p-on ' + SEL.host + ' canvas.dcui2p-right {',
+    '  transform: translateX(var(--dcui2p-w, 0px)) !important; left: 0 !important; opacity: 1 !important;',
+    '}',
     'html.dcui2p-on ' + SEL.host + ' canvas.dcui2p-off   { visibility: hidden !important; }',
     // A page turn is a content swap we cannot animate, so fade over it: the
     // pages appear to change together rather than one visibly following the
@@ -739,10 +743,37 @@
     return 0;
   }
 
+  // Stacking order, the other way the widget marks its slots. Observed
+  // constant since the first probe: 3 = current, 2 = next, 1 = previous.
+  function zOf(canvas) {
+    const z = parseInt(canvas.style.zIndex || getComputedStyle(canvas).zIndex, 10);
+    return isNaN(z) ? 0 : z;
+  }
+
+  // Do the canvases still sit at three different offsets? Double-clicking a
+  // panel parks all of them at translate(0,0), at which point the transform
+  // says nothing about which page a canvas holds.
+  function slotsCollapsed(host) {
+    const cs = qa('canvas', host);
+    return cs.length >= 2 && new Set(cs.map(slotOf)).size < 2;
+  }
+
   // Classify the carousel by ORDER rather than by exact offsets. Sorted left to
   // right the three canvases are always [prev, current, next], which stays
   // correct even mid-animation when none of them sits at exactly 0.
   function classify(host) {
+    // ...but not when they are all at the same offset. Fall back to the
+    // stacking order, which still distinguishes them. Without this the roles
+    // are handed out in DOM order, which is to say at random.
+    if (slotsCollapsed(host)) {
+      const byZ = qa('canvas', host)
+        .map((el) => ({ el: el, z: zOf(el) }))
+        .sort((a, b) => b.z - a.z);
+      const collapsed = new Map();
+      byZ.forEach((c, i) => collapsed.set(c.el, i === 0 ? 'cur' : i === 1 ? 'next' : 'prev'));
+      return collapsed;
+    }
+
     const slots = qa('canvas', host)
       .map((el) => ({ el: el, slot: slotOf(el) }))
       .sort((a, b) => a.slot - b.slot);
@@ -2024,6 +2055,7 @@
         single: toggleSingle,
         dim: cycleDim,
         zoomed: readerZoomed,
+        collapsed: () => { const h = q(SEL.host); return !!h && slotsCollapsed(h); },
         verifyRestore: verifyRestore,
         snapshot: snapshot,
         stats: () => state.stats,
