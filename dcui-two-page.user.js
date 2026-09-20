@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         DCUI Two-Page View
 // @namespace    https://github.com/SamSchmitz98/DualComicReader
-// @version      0.3.2
+// @version      0.4.0
 // @description  Shows two portrait pages side by side in the DC Universe Infinite web reader, like an open print comic. Layout only - no downloading, extracting or re-hosting of artwork.
 // @author       SamSchmitz98
 // @match        https://www.dcuniverseinfinite.com/comics/book/*
@@ -54,7 +54,7 @@
     pageCount: '.page-count',
   };
 
-  const VERSION = (typeof GM_info !== 'undefined' && GM_info.script && GM_info.script.version) || '0.3.2';
+  const VERSION = (typeof GM_info !== 'undefined' && GM_info.script && GM_info.script.version) || '0.4.0';
 
   const DEFAULT_ASPECT = 0.652;   // standard US comic page, used until the manifest loads
   const MIN_BOX = 260;            // below this a pair is unreadable; fall back to single page
@@ -78,6 +78,8 @@
     rowsKey: '',        // signature of the inputs the rows were built from
     aligned: false,     // have we nudged onto a row boundary since load?
     stock: null,        // snapshot of the untouched reader, to verify T restores it
+    manifestDecoded: 0, // thumbnails that have decoded (and so have real dimensions)
+    manifestExpected: 0,
     stats: { applies: 0, mutations: 0, resizes: 0, canvases: 0, rate: '0/s 0/s', since: Date.now() },
   };
 
@@ -169,6 +171,9 @@
         undecoded++;
       }
     }
+    state.manifestDecoded = decoded;
+    state.manifestExpected = thumbs.length;
+
     if (!decoded) {
       log('manifest: found ' + thumbs.length + ' thumbnails but none decoded yet');
       return false;
@@ -176,10 +181,33 @@
     state.manifest = manifest;
     if (!state.total) state.total = thumbs.length;
     buildRows();
-    log('manifest: ' + decoded + ' pages read' + (undecoded ? ', ' + undecoded + ' not yet decoded' : '') +
+    log('manifest: ' + decoded + '/' + thumbs.length + ' pages read' +
+        (undecoded ? ' (' + undecoded + ' still decoding)' : '') +
         ', spreads at ' + (spreadPages().join(', ') || 'none') +
         ', laid out in ' + state.rows.length + ' rows');
-    return true;
+    return undecoded === 0;
+  }
+
+  // A thumbnail that has not decoded yet reports naturalHeight 0, so its page
+  // silently defaults to portrait - and if that page is a spread, it gets
+  // paired when it should stand alone. One read at startup is therefore not
+  // enough: keep re-reading until every thumbnail has decoded.
+  let manifestPoll = 0;
+  function pollManifest() {
+    clearInterval(manifestPoll);
+    let tries = 0;
+    manifestPoll = setInterval(() => {
+      if (readManifest() || ++tries > 30) {      // ~22s worst case
+        clearInterval(manifestPoll);
+        if (state.manifestDecoded === state.manifestExpected) {
+          log('manifest: complete, ' + spreadPages().length + ' spreads');
+          apply();
+        } else {
+          warn('manifest: gave up with ' + state.manifestDecoded + '/' + state.manifestExpected +
+               ' decoded - pages that never decoded are assumed portrait');
+        }
+      }
+    }, 750);
   }
 
   const aspectOf = (page) => state.manifest[page] || DEFAULT_ASPECT;
@@ -354,8 +382,9 @@
       'box        ' + (L.boxW || '?') + 'px   left=' + (L.left || 0) + 'px   span=' + (L.spanW || '?') + 'px',
       'viewport   ' + window.innerWidth + 'x' + window.innerHeight +
         '   ideal box=' + Math.round(window.innerHeight * aspectOf(page)) + 'px',
-      'manifest   ' + (state.manifest.filter(Boolean).length || 0) + ' pages, ' +
-        spreadPages().length + ' spreads',
+      'manifest   ' + state.manifestDecoded + '/' + (state.manifestExpected || '?') + ' decoded, ' +
+        spreadPages().length + ' spreads' +
+        (state.manifestDecoded < state.manifestExpected ? '  (still loading)' : ''),
       'nav hook   ' + (state.navStrategy || 'not yet determined'),
       'churn      ' + state.stats.rate + '   resizes sent ' + state.stats.resizes +
         '   canvases ' + state.stats.canvases,
@@ -491,6 +520,12 @@
 
     if (!state.enabled) return teardown();
     if (!state.manifest.length) readManifest();
+
+    // A pair takes two page turns, and between them the counter sits on the
+    // intermediate page - which would lay out as a single page and then back,
+    // jumping the container sideways for half a second on every turn. Hold the
+    // current layout until navigation settles; step() re-applies at the end.
+    if (state.navigating) { updateHud(); return; }
 
     const page = currentPage();
     if (!page) return;
@@ -961,7 +996,7 @@
       if (++tries > 120) { clearInterval(boot); return; }   // ~60s, then give up quietly
       if (!onReaderPage()) return;
       if (q(SEL.host) && currentPage()) {
-        readManifest();
+        if (!readManifest()) pollManifest();
         if (watch()) {
           clearInterval(boot);
           // Capture the untouched reader before apply() first modifies it.
@@ -989,7 +1024,11 @@
       state.aligned = false;
       log('navigated to ' + location.pathname);
       if (onReaderPage()) {
-        setTimeout(() => { readManifest(); apply(); setTimeout(maybeAlign, 400); }, 1200);
+        setTimeout(() => {
+          if (!readManifest()) pollManifest();
+          apply();
+          setTimeout(maybeAlign, 400);
+        }, 1200);
       } else {
         teardown();
       }

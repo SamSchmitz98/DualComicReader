@@ -78,12 +78,15 @@ Partly established.
   arrow keys itself. Our own handler must run first (capture phase) and call
   `stopImmediatePropagation()` to retime navigation without the reader also
   acting on the same keypress.
-- Which synthetic event the reader actually honours was **not** determined by
-  inspection — the handlers are minified and the reader exposes no API. The
-  script instead probes at runtime: keyboard events at the focused element, at
-  `document`, at `window` and at the reader element, then an edge click, then
-  a touch swipe, keeping whichever moves the page counter. `dcui2p.probeNav()`
-  runs the same sweep on demand and prints the results.
+- **The reader honours `key:focused`** — a synthetic `ArrowLeft`/`ArrowRight`
+  `KeyboardEvent` dispatched at `document.activeElement` and allowed to bubble.
+  Confirmed in a live session. It does *not* check `isTrusted`. Dispatching
+  straight at `document` or `window` was not needed, though the script still
+  falls back through those, an edge click and a touch swipe if the preferred
+  hook ever stops working.
+- **A page turn takes about 475ms** from dispatch to the page counter
+  updating, so a paired turn costs roughly 950ms. That is the reader's own
+  transition, not our polling.
 - A trap worth recording: in a sandboxing userscript engine, passing the
   script's own `window` as a UIEvent's `view` throws *"Failed to convert value
   to 'Window'"*, and every dispatch fails before reaching the page. Use
@@ -280,8 +283,13 @@ request — the thumbnails are fetched by the reader whether we look at them or
 not.
 
 **Confirmed available without opening the modal.** All 238 thumbnails are in
-the DOM on a fresh page load, fully decoded, while the page browser is still
-closed. (Earlier probes missed them only because those filtered for images
+the DOM on a fresh page load while the page browser is still closed.
+
+They are *not* necessarily decoded yet, though. A thumbnail that has not
+finished decoding reports `naturalHeight === 0`, and a single read at startup
+caught only three of this issue's four spreads — the fourth defaulted to
+portrait and would have been wrongly paired. The manifest has to be re-read
+until every thumbnail reports real dimensions. (Earlier probes missed them only because those filtered for images
 wider than 200px and the thumbnails are 163px wide.) The script can read the
 whole manifest silently at startup — no UI flashing, no modal toggling.
 
