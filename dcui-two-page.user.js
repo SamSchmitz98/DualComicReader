@@ -692,6 +692,12 @@
     '  visibility: visible !important; opacity: 0.15 !important;',
     '  outline: 2px dashed #f44 !important; outline-offset: -2px;',
     '}',
+    // The site keeps a scroll container whose scrollbar sits at the right edge
+    // of the screen, so a pale strip shows beside the spread. Hiding it is a
+    // restyle and nothing more - the container still scrolls, and the class
+    // comes off again on teardown.
+    'html.dcui2p-on .dcui2p-noscroll { scrollbar-width: none !important; }',
+    'html.dcui2p-on .dcui2p-noscroll::-webkit-scrollbar { width: 0 !important; height: 0 !important; }',
     '#dcui2p-help {',
     '  position: fixed; left: 50%; top: 50%; transform: translate(-50%, -50%);',
     '  z-index: 2147483646; background: rgba(0,0,0,0.92); color: #fff;',
@@ -715,6 +721,20 @@
     style.id = 'dcui2p-style';
     style.textContent = CSS;
     document.head.appendChild(style);
+  }
+
+  // Tag the reader's ancestors so the rule above can reach whichever of them
+  // owns the scrollbar. Deliberately only ancestors: the page browser's
+  // thumbnail grid is a cousin, and it needs its scrollbar to stay.
+  function hideEdgeScrollbars(on) {
+    if (on) {
+      const chain = [];
+      for (let n = q(SEL.outer); n && n.nodeType === 1; n = n.parentElement) chain.push(n);
+      chain.push(document.body, document.documentElement);
+      for (const el of chain) if (el) el.classList.add('dcui2p-noscroll');
+    } else {
+      for (const el of qa('.dcui2p-noscroll')) el.classList.remove('dcui2p-noscroll');
+    }
   }
 
   function backdrop(on) {
@@ -906,6 +926,7 @@
       root.style.setProperty('--dcui2p-w', boxW + 'px');
       root.style.setProperty('--dcui2p-left', left + 'px');
       backdrop(true);
+      hideEdgeScrollbars(true);
 
       // Map carousel roles (prev/cur/next) onto the two visible slots. Which
       // role lands on the left depends on whether the current page leads its
@@ -981,6 +1002,8 @@
       diffs.push('root still carries our classes: ' + document.documentElement.className);
     }
     if (q('#dcui2p-backdrop')) diffs.push('our backdrop is still in the DOM');
+    const stillHidden = qa('.dcui2p-noscroll').length;
+    if (stillHidden) diffs.push(stillHidden + ' element(s) still have their scrollbar hidden');
 
     const canvases = qa('canvas', host);
     const tagged = canvases.filter((c) => /dcui2p/.test(c.className));   // left/right/off
@@ -1013,6 +1036,7 @@
       root.style.removeProperty('--dcui2p-left');
       root.style.removeProperty('--dcui2p-dim');
       backdrop(false);
+      hideEdgeScrollbars(false);
       toggleHelp(false);
       for (const canvas of qa('canvas', q(SEL.host) || document)) {
         canvas.classList.remove('dcui2p-left', 'dcui2p-right', 'dcui2p-off');

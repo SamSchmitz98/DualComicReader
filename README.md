@@ -91,7 +91,9 @@ So the script reads the manifest to learn each page's aspect ratio, sets the
 container to exactly the width the art wants to be (`viewportHeight ×
 pageAspect`), and lets the reader redraw. The art then fills its canvas edge to
 edge, and the neighbouring canvas lands flush against it. The script centers
-the pair and hides the third canvas. That is the whole trick — no cropping, no
+the pair, hides the third canvas, and hides the scrollbar the site keeps at
+the right edge of the screen — which is only a restyle, and comes back with
+the rest on `T`. That is the whole trick — no cropping, no
 scaling hacks, and nothing reading pixels back off a canvas.
 
 ### Pairing
