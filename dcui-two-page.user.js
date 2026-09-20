@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         DCUI Two-Page View
 // @namespace    https://github.com/SamSchmitz98/DualComicReader
-// @version      1.1.0
+// @version      1.2.0
 // @description  Shows two portrait pages side by side in the DC Universe Infinite web reader, like an open print comic. Layout only - no downloading, extracting or re-hosting of artwork.
 // @author       SamSchmitz98
 // @match        https://www.dcuniverseinfinite.com/comics/book/*
@@ -64,7 +64,7 @@
     pageCount: '.page-count',
   };
 
-  const VERSION = (typeof GM_info !== 'undefined' && GM_info.script && GM_info.script.version) || '1.1.0';
+  const VERSION = (typeof GM_info !== 'undefined' && GM_info.script && GM_info.script.version) || '1.2.0';
 
   const DEFAULT_ASPECT = 0.652;   // standard US comic page, used until the manifest loads
   const MIN_BOX = 260;            // below this a pair is unreadable; fall back to single page
@@ -74,6 +74,14 @@
   const FADE_MS = 80;             // fade out/in across a page turn; drives CSS and the wait
   const FADE_MAX_MS = 1800;       // never hold the screen faded out longer than this (a two-page jump takes ~1.3s)
   const SETTLE_QUIET = 620;       // ms of no page change that counts as "arrived"
+  // Standard-gamepad button indices (Xbox layout): the triggers, shoulders,
+  // d-pad and face buttons all move a spread, so whichever one falls under a
+  // thumb works without configuring anything.
+  const PAD_NEXT = [7, 5, 15, 0];  // RT, RB, d-pad right, A
+  const PAD_PREV = [6, 4, 14, 1];  // LT, LB, d-pad left, B
+  const PAD_AXIS = 0.6;            // stick deflection that counts as a press
+  const PAD_ANALOG = 0.5;          // trigger pull that counts as a press
+
   const SWIPE_ARM_PX = 45;        // fade out here, before the gesture is over
   const SWIPE_MIN_PX = 60;        // shorter than this is a click, not a swipe
   const SWIPE_MAX_MS = 900;       // slower than this is a pan or a hesitation, not a swipe
@@ -100,6 +108,9 @@
     smooth: true,       // fade across page turns instead of watching them
     jumpWorks: null,    // can we navigate by clicking a page-browser thumbnail?
     jumpOffset: 0,      // measured gap between a thumbnail's alt text and where it lands
+    gamepad: true,      // read controllers; set false from the console to stop
+    padName: '',        // what is connected, for the HUD
+    padLast: '',        // last control pressed, so a button can be identified
     history: [],        // every page change, recorded whether or not debug is on
     navReason: '',      // what the script is currently doing, to attribute changes
     // Set when a jump has been tried and did nothing: the arrow keys are then
@@ -430,6 +441,8 @@
       'manifest   ' + state.manifestDecoded + '/' + (state.manifestExpected || '?') + ' decoded, ' +
         spreadPages().length + ' spreads' +
         (state.manifestDecoded < state.manifestExpected ? '  (still loading)' : ''),
+      'pad        ' + (state.padName || 'none connected') +
+        (state.padLast ? '   last: ' + state.padLast : ''),
       'nav hook   ' + (state.passThrough ? 'NONE - keys passed to reader, one page per press' : 'jump:thumbnail') +
         '   jump ' + (state.jumpWorks === null ? 'untested' : state.jumpWorks ? 'YES' : 'no') +
         (state.jumpOffset ? '(' + (state.jumpOffset > 0 ? '+' : '') + state.jumpOffset + ')' : '') +
@@ -512,6 +525,8 @@
       'settings:  enabled=' + state.enabled + '  offset=' + state.parity +
         (state.parity === 0 ? ' (cover alone)' : ' (pairs from page 1)') +
         '  smooth=' + state.smooth,
+      'gamepad:   ' + (state.padName || 'none connected') +
+        (state.padLast ? '   last control: ' + state.padLast : ''),
       'nav:       hook=' + (state.passThrough ? 'none (reader has the keys)' : 'jump:thumbnail') +
         '  jumpWorks=' + state.jumpWorks +
         '  jumpOffset=' + state.jumpOffset + '  passThrough=' + state.passThrough,
@@ -1407,6 +1422,97 @@
     }
   }
 
+  // ----------------------------------------------------------------- gamepad
+  //
+  // Streaming a controller in (Moonlight/Sunshine, Steam Link) delivers a real
+  // XInput device to the host, so Chrome exposes it through the Gamepad API.
+  // The reader itself does not read gamepads - but whatever maps the pad into
+  // the stream may also be sending a keystroke or click that the reader DOES
+  // react to, turning a single page underneath us.
+  //
+  // So this does not assume it is the only thing navigating. Exactly as with a
+  // swipe: note the page the press started from, let anything else finish,
+  // then complete the move to that row. Correct whether the controller also
+  // turned a page or not, and `state.navigating` keeps the two from racing
+  // when the pad is mapped to a real arrow key we already handle.
+  let padLoop = 0;
+  const padHeld = new Set();
+
+  function readPads() {
+    padLoop = 0;
+    if (!state.gamepad) return;
+    const pads = (navigator.getGamepads && navigator.getGamepads()) || [];
+    let connected = 0;
+
+    for (const pad of pads) {
+      if (!pad || !pad.connected) continue;
+      connected++;
+      state.padName = pad.id || 'gamepad ' + pad.index;
+
+      const buttons = pad.buttons || [];
+      for (let i = 0; i < buttons.length; i++) {
+        const b = buttons[i];
+        const down = typeof b === 'object' ? (b.pressed || b.value > PAD_ANALOG) : b > PAD_ANALOG;
+        const id = pad.index + ':b' + i;
+        if (down && !padHeld.has(id)) {
+          padHeld.add(id);
+          state.padLast = 'button ' + i;
+          padNavigate(PAD_NEXT.indexOf(i) >= 0 ? 1 : PAD_PREV.indexOf(i) >= 0 ? -1 : 0);
+        } else if (!down) {
+          padHeld.delete(id);          // must be released before it fires again
+        }
+      }
+
+      // Left stick, horizontal. Treated as a press rather than a repeat.
+      const ax = (pad.axes && pad.axes[0]) || 0;
+      const id = pad.index + ':ax0';
+      if (Math.abs(ax) >= PAD_AXIS) {
+        if (!padHeld.has(id)) {
+          padHeld.add(id);
+          state.padLast = 'stick ' + ax.toFixed(2);
+          padNavigate(ax > 0 ? 1 : -1);
+        }
+      } else {
+        padHeld.delete(id);
+      }
+    }
+
+    if (connected) padLoop = requestAnimationFrame(readPads);
+    else { state.padName = ''; padHeld.clear(); }
+  }
+
+  function startPadLoop() {
+    if (!padLoop) padLoop = requestAnimationFrame(readPads);
+  }
+
+  async function padNavigate(dir) {
+    if (!dir || !state.enabled || !onReaderPage()) return;
+    if (state.navigating || state.passThrough || state.jumpWorks === false) return;
+
+    const startPage = currentPage();
+    const target = startPage ? targetPage(startPage, dir) : 0;
+    if (!target || target === startPage) return;
+    if (!thumbFor(target - state.jumpOffset)) return;
+
+    state.navigating = true;
+    state.navReason = 'gamepad ' + (dir > 0 ? 'forward' : 'back') + ' to ' + target;
+    try {
+      if (state.smooth) setTurning(true);
+      // Whatever else the controller is mapped to may turn a page by itself.
+      // Let that land first - a jump issued mid-turn gets the turn added on
+      // top and finishes one page out.
+      const own = await waitForPageChange(startPage, 500);
+      if (own) await settledPage(900, 180);
+      log('gamepad: ' + state.padLast + ' -> ' + (dir > 0 ? 'forward' : 'back') +
+          '; the stream ' + (own ? 'also turned a page' : 'turned nothing') + '; target ' + target);
+      await goToPage(target, 'gamepad ' + (dir > 0 ? 'forward' : 'back'));
+    } finally {
+      state.navigating = false;
+      apply();
+      requestAnimationFrame(() => setTurning(false));
+    }
+  }
+
   // ---------------------------------------------------------------- hotkeys
 
   function toggleDebug() {
@@ -1603,6 +1709,9 @@
     window.addEventListener('pointermove', onPointerMove, true);
     window.addEventListener('pointerup', onPointerUp, true);
     window.addEventListener('pointercancel', onPointerCancel, true);
+    // Chrome only reveals a pad once it has been used, and announces it here.
+    window.addEventListener('gamepadconnected', startPadLoop);
+    startPadLoop();     // in case one was already in use before we loaded
 
     // Everything below touches the DOM, which does not exist yet at
     // document-start.

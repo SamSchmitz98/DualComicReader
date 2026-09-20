@@ -62,6 +62,7 @@ New versions are picked up automatically from this repository.
 | `D` | Toggle the debug HUD. On a touch device, triple-tap the top-left corner instead. |
 | `←` `→` | Move one *spread* at a time (via the page-browser thumbnails — the only synthetic input the reader honors). |
 | Swipe / mouse drag | Also moves one spread. Swipe left for the next spread, right for the previous one. |
+| Controller | Triggers, shoulders, d-pad left/right, A/B and the left stick each move one spread. |
 
 All settings are remembered per site, via the userscript manager's
 storage where available and `localStorage` otherwise.
@@ -130,6 +131,25 @@ swipe, rather than at the release. A canvas reader draws its reaction to a
 drag into the bitmap — pages sliding under the pointer — and no amount of CSS
 pinning holds that still, so covering the gesture is the only way to hide it.
 A drag that turns out not to be a swipe releases the fade on the spot.
+
+### Controllers
+
+A controller streamed to the machine — Moonlight/Sunshine, Steam Link — shows
+up to Chrome as an ordinary gamepad, so the script reads it directly: the
+triggers, shoulder buttons, d-pad left and right, A and B, and the left stick
+all move one spread. Nothing to configure.
+
+Whatever maps the controller into the stream may *also* be sending a
+keystroke or a click that the reader reacts to, turning a single page
+underneath. That is handled the same way as a swipe: note the page the press
+started from, let anything else land, then complete the move to that row. The
+result is right whether the stream turned a page or not, and if it happens to
+send a real arrow key the two paths cannot race — whichever starts first wins
+and the other stands down.
+
+To identify which control is which, open the HUD: it shows the connected pad
+and the last control pressed, as `button 7` or `stick -0.98`. Setting
+`dcui2p.state.gamepad = false` in the console turns controller reading off.
 
 The reader's on-screen buttons and its page browser still move one page at a
 time, and the pairing follows wherever they land.
@@ -234,6 +254,10 @@ If arrow keys are not turning pages, `dcui2p.probeNav()` is the place to start
   the script's fallback constant and in the manifest. `node
   tools/check-version.js` verifies they agree; `node tools/check-version.js
   1.2.3` sets all three.
+- `tools/test-gamepad.js` — a streamed controller: a trigger press lands on
+  the right spread whether or not the stream also turns a page by itself, a
+  barely-touched analog trigger is not a press, and holding a button moves one
+  spread rather than many.
 - `tools/test-swipe.js` — drags and swipes: that one gesture moves one spread
   whether the reader itself turns a page in response or not, and that clicks,
   vertical drags, slow pans and drags on buttons or open modals are left
