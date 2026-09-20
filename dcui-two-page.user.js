@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         DCUI Two-Page View
 // @namespace    https://github.com/SamSchmitz98/DualComicReader
-// @version      1.3.0
+// @version      1.3.1
 // @description  Shows two portrait pages side by side in the DC Universe Infinite web reader, like an open print comic. Layout only - no downloading, extracting or re-hosting of artwork.
 // @author       SamSchmitz98
 // @match        https://www.dcuniverseinfinite.com/comics/book/*
@@ -64,7 +64,7 @@
     pageCount: '.page-count',
   };
 
-  const VERSION = (typeof GM_info !== 'undefined' && GM_info.script && GM_info.script.version) || '1.3.0';
+  const VERSION = (typeof GM_info !== 'undefined' && GM_info.script && GM_info.script.version) || '1.3.1';
 
   const DEFAULT_ASPECT = 0.652;   // standard US comic page, used until the manifest loads
   const MIN_BOX = 260;            // below this a pair is unreadable; fall back to single page
@@ -1951,9 +1951,8 @@
       (typeof GM_info !== 'undefined' ? ' (userscript)' : ' (extension)') + ' loaded — ' +
       (state.enabled ? 'enabled' : 'DISABLED (press T)') +
       (state.debug ? ', debug on' : '') +
-      '  |  T toggle · P pairing offset · S smooth turns · D debug HUD' +
-      '  |  dcui2p.report() for a copyable diagnosis' +
-      (state.debug ? '' : '  |  press D for the HUD and verbose logging'),
+      '  |  press H for the key list, D for the debug HUD' +
+      '  |  dcui2p.report() for a copyable diagnosis',
       'color:#0a0;font-weight:bold', 'color:inherit');
 
     // Keep the HUD honest even when nothing mutates.
