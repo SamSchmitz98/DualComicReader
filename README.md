@@ -1,8 +1,9 @@
 # DCUI Two-Page View
 
-A userscript that makes the [DC Universe Infinite](https://www.dcuniverseinfinite.com)
-web reader show **two portrait pages side by side** on a landscape screen, like
-an open print comic — so casting the Chrome tab to a TV looks right.
+Makes the [DC Universe Infinite](https://www.dcuniverseinfinite.com) web
+reader show **two portrait pages side by side** on a landscape screen, like an
+open print comic — so casting the Chrome tab to a TV looks right. Installs as
+a standalone Chrome extension or as a userscript.
 
 It restyles what the reader already draws. It does not download, save, extract
 or re-host artwork, does not touch authentication or decryption, and adds no
@@ -77,10 +78,9 @@ Two properties of the reader make the spread nearly free:
 So the script reads the manifest to learn each page's aspect ratio, sets the
 container to exactly the width the art wants to be (`viewportHeight ×
 pageAspect`), and lets the reader redraw. The art then fills its canvas edge to
-edge, and the "next" canvas lands flush against the current one's right edge.
-The script centers the pair and hides the "previous" canvas. That is the whole
-trick — no cropping, no scaling hacks, and nothing reading pixels back off a
-canvas.
+edge, and the neighbouring canvas lands flush against it. The script centers
+the pair and hides the third canvas. That is the whole trick — no cropping, no
+scaling hacks, and nothing reading pixels back off a canvas.
 
 ### Pairing
 
@@ -116,19 +116,17 @@ browser — you move one page at a time and the pairing follows you.
 
 ### Smoothness
 
-The reader turns one page at a time and takes roughly 475ms to do it, so
-advancing a pair by stepping means watching the right-hand page slide into the
-left slot and a new page appear after it. Two things avoid that:
+The reader turns one page at a time and takes roughly 475ms per turn, and it
+animates through every page on the way to a destination — so moving a spread
+costs two turns however it is asked. Two things keep that from showing:
 
-- **Jumping.** The page-browser thumbnails are in the DOM with the modal
-  closed and their click handlers are live, so the script clicks the target
-  page's thumbnail and the reader goes straight there — one transition per
-  move instead of two, with no intermediate page. If the thumbnails turn out
-  not to be clickable, it falls back to stepping and remembers that.
+- **The page in between looks identical.** Going from 96 to 98 passes through
+  97, but 97 trails the same row as 96, so the display shows `[96, 97]` the
+  whole way and changes once, when 98 lands.
 - **Fading.** A content swap in a canvas cannot be animated, so the script
-  fades the reader out and back across the turn. The backdrop behind is
-  already black, so it reads as a blink rather than a shuffle. Press `S` to
-  turn it off and compare.
+  fades the reader out, moves, and fades back in once the destination has
+  landed. The backdrop behind is already black, so it reads as a page turn
+  rather than a glitch. Press `S` to turn it off and compare.
 
 ## Debugging
 
